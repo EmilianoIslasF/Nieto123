@@ -1,0 +1,34 @@
+﻿variable,categoria,descripcion,fuente,tipo,notas,valores_nulos
+MUNICIPIO,identificador,Nombre de la alcaldía en mayúsculas,RNPDNO,string,16 valores únicos. Ej: IZTAPALAPA,No
+nom_alcaldia,identificador,Nombre de la alcaldía con tildes,ITER 2020,string,Usar para etiquetas en gráficas,No
+CVE_MUN,identificador,Clave de municipio INEGI,INEGI,integer,Rango 2–17. Clave estándar para CDMX,No
+cve_mun_sesnsp,identificador,Clave municipal en formato SESNSP,Calculada,integer,= 9000 + CVE_MUN. Rango 9002–9017. Llave de join con SESNSP,No
+anio,identificador,Año de desaparición,RNPDNO,integer,Rango 2015–2025,No
+mes,identificador,Mes de desaparición (1–12),RNPDNO,integer,Usar junto con anio para construir fecha,No
+fecha,identificador,Primer día del mes (YYYY-MM-01),Calculada,date,127 fechas únicas. Índice temporal de la serie,No
+n_desapariciones,dependiente,Total de personas desaparecidas en la alcaldía ese mes,RNPDNO,integer,Rango 1–15. Solo meses con al menos 1 caso (ceros ausentes),No
+n_hombres,dependiente,Desapariciones de hombres,RNPDNO,integer,Rango 0–12,No
+n_mujeres,dependiente,Desapariciones de mujeres,RNPDNO,integer,Rango 0–6,No
+n_desaparecidos,dependiente,Casos con estatus DESAPARECIDA (aún sin localizar),RNPDNO,integer,Subconjunto de n_desapariciones,No
+n_no_localizados,dependiente,Casos con estatus NO LOCALIZADA (búsqueda activa),RNPDNO,integer,Rango 0–9. Distinto a DESAPARECIDA,No
+n_delitos_libertad,covariable_sesnsp,"Delitos contra la libertad personal: secuestro, trata, rapto, tráfico de menores y otros",SESNSP,integer,Rango 0–50. Proxy de contexto de riesgo directo,No
+n_homicidios,covariable_sesnsp,Homicidios dolosos y culposos registrados,SESNSP,integer,Rango 0–46. Control de violencia general,No
+n_feminicidios,covariable_sesnsp,Feminicidios registrados,SESNSP,integer,Rango 0–4. Relevante para análisis de desap. de mujeres,No
+n_violencia_familiar,covariable_sesnsp,Delitos de violencia familiar,SESNSP,integer,Rango 18–678. Control de violencia doméstica,No
+n_extorsion,covariable_sesnsp,Delitos de extorsión,SESNSP,integer,Rango 0–39. Proxy de crimen organizado,No
+n_robos,covariable_sesnsp,Total de robos (todos los subtipos),SESNSP,integer,Rango 20–1820. Control de actividad delictiva general,No
+periodo_gobierno,politico_temporal,Gobierno en turno en la CDMX,Calculada,string,3 valores: PRD_Mancera (hasta nov-2018) / Morena_Sheinbaum (dic-2018 a sep-2024) / Morena_Brugada (oct-2024+),No
+post_2018,politico_temporal,Dummy: 1 si fecha >= diciembre 2018,Calculada,binary,"Breakpoint principal del análisis. 0 = período PRD, 1 = Morena",No
+post_2024,politico_temporal,Dummy: 1 si fecha >= octubre 2024,Calculada,binary,Segundo breakpoint (cambio Sheinbaum → Brugada),No
+pct_seguros_cdmx,politico_temporal,"% de personas que se sienten seguras en CDMX (trimestral, interpolado a mensual)",ENVIPE/Monitor CDMX,float,"Rango 7.4–44.0. 8 NAs en ene-feb 2015 (antes del primer dato disponible). Varía en el tiempo, no entre alcaldías",8 (ene-feb 2015)
+pct_seguros_nacional,politico_temporal,% que se sienten seguros a nivel nacional (interpolado a mensual),ENVIPE,float,Rango 26.5–39.8. Control comparativo nacional,8 (ene-feb 2015)
+pob_total,poblacion,Población total de la alcaldía (Censo 2020),ITER 2020,integer,"Rango 152,685 (Milpa Alta) – 1,835,486 (Iztapalapa). Valor fijo, no varía por año",No
+pob_femenina,poblacion,Población femenina (Censo 2020),ITER 2020,integer,Denominador para tasa_desap_mujeres,No
+pob_masculina,poblacion,Población masculina (Censo 2020),ITER 2020,integer,Denominador para tasa_desap_hombres,No
+pob_18ymas,poblacion,Población de 18 años y más (Censo 2020),ITER 2020,integer,Universo de posibles víctimas adultas,No
+pob_15_64,poblacion,Población en edad productiva 15–64 años (Censo 2020),ITER 2020,integer,Grupo etario de mayor exposición a desaparición,No
+tasa_desap_100k,tasa_derivada,"Desapariciones por 100,000 habitantes ese mes",Calculada,float,"= (n_desapariciones / pob_total) × 100,000. Rango 0.05–2.62",No
+tasa_desap_anualizada,tasa_derivada,Tasa mensual multiplicada por 12. Desapariciones anuales por 100k hab,Calculada,float,Variable dependiente recomendada para modelos. Rango 0.65–31.44,No
+tasa_desap_hombres,tasa_derivada,"Desapariciones de hombres por 100,000 hombres ese mes",Calculada,float,Denominador: pob_masculina,No
+tasa_desap_mujeres,tasa_derivada,"Desapariciones de mujeres por 100,000 mujeres ese mes",Calculada,float,Denominador: pob_femenina,No
+ratio_mujer_hombre,tasa_derivada,Razón de desapariciones femeninas sobre masculinas,Calculada,float,= n_mujeres / n_hombres. 191 NAs cuando n_hombres = 0. Rango válido 0–4,191 (n_hombres=0)
