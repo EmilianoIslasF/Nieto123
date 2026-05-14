@@ -1,0 +1,270 @@
+---
+title: "Desapariciones en México: cambio de sexenio 2018 y relación con violencia"
+format: html
+editor: visual
+---
+
+## 1. Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(sf)
+
+library(leaflet)
+```
+
+## 2. Carga y exploración de fuentes
+
+```{r}
+# Microdatos RNPDNO
+data <- read.csv("data.csv")
+str(data)
+```
+
+```{r}
+cat("Registros totales:", nrow(data), "\n")
+
+cat("\nDistribución por sexo:\n")
+print(table(data$SEXO))
+
+cat("\nEstatus víctima:\n")
+print(table(data$ESTATUS_VICTIMA))
+```
+
+```{r}
+# Serie de violencia SESNSP
+ts <- read.csv("assets/timeseries_victimas.csv")
+str(ts)
+names(ts)
+```
+
+## 3. Limpieza de microdatos
+
+```{r}
+data_limpio <- data %>%
+  # Deduplicar: un registro por víctima (igual que los scripts Python)
+  group_by(ID_VICTIMA) %>%
+  slice_tail(n = 1) %>%
+  ungroup() %>%
+  # Quitar confidenciales
+  filter(
+    SEXO != "CONFIDENCIAL",
+    FECHA_DESAPARICION != "CONFIDENCIAL",
+    FECHA_DESAPARICION != "",
+    ESTATUS_VICTIMA != "CONFIDENCIAL"
+  ) %>%
+  mutate(
+    FECHA_DESAP = as.Date(substr(FECHA_DESAPARICION, 1, 10)),
+    ANIO        = year(FECHA_DESAP),
+    MES         = month(FECHA_DESAP),
+    PERIODO     = floor_date(FECHA_DESAP, "month"),
+    # Etiqueta de sexenio (dic 2018 = inicio AMLO)
+    SEXENIO     = if_else(
+      FECHA_DESAP < as.Date("2018-12-01"),
+      "Peña Nieto (2014–2018)",
+      "AMLO (2019–2024)"
+    )
+  ) %>%
+  filter(ANIO >= 2014, ANIO <= 2024)
+
+cat("Registros tras limpieza:", nrow(data_limpio), "\n")
+cat("Rango:", format(range(data_limpio$FECHA_DESAP)), "\n")
+```
+
+## 4. Serie nacional — marcador de sexenio
+
+```{r}
+serie_nacional <- data_limpio %>%
+  group_by(PERIODO) %>%
+  summarise(
+    desaparecidos = n(),
+    hombres = sum(SEXO == "HOMBRE"),
+    mujeres = sum(SEXO == "MUJER"),
+    .groups = "drop"
+  )
+
+ggplot(serie_nacional, aes(x = PERIODO, y = desaparecidos)) +
+  geom_line(color = "#534AB7", linewidth = 1) +
+  geom_vline(
+    xintercept = as.Date("2018-12-01"),
+    color = "#E53935", linetype = "dashed", linewidth = 0.9
+  ) +
+  annotate(
+    "text",
+    x     = as.Date("2018-12-01"),
+    y     = max(serie_nacional$desaparecidos) * 0.9,
+    label = "dic. 2018\ncambio de sexenio",
+    color = "#E53935", hjust = -0.05, size = 3.5
+  ) +
+  labs(
+    title    = "Desapariciones mensuales en México (2014–2024)",
+    subtitle = "Víctimas únicas · Fuente: RNPDNO",
+    x = NULL, y = "Número de desapariciones"
+  ) +
+  theme_minimal()
+```
+
+## 5. Comparación por sexenio
+
+```{r}
+data_limpio %>%
+  group_by(SEXENIO) %>%
+  summarise(
+    total            = n(),
+    promedio_mensual = round(n() / n_distinct(PERIODO), 1),
+    pct_hombres      = round(mean(SEXO == "HOMBRE") * 100, 1),
+    pct_mujeres      = round(mean(SEXO == "MUJER") * 100, 1),
+    .groups = "drop"
+  )
+```
+
+```{r}
+# Evolución anual coloreada por sexenio
+data_limpio %>%
+  group_by(ANIO, SEXENIO) %>%
+  summarise(desaparecidos = n(), .groups = "drop") %>%
+  ggplot(aes(x = ANIO, y = desaparecidos, fill = SEXENIO)) +
+  geom_col() +
+  scale_fill_manual(values = c(
+    "Peña Nieto (2014–2018)" = "#1565C0",
+    "AMLO (2019–2024)"       = "#B71C1C"
+  )) +
+  labs(
+    title = "Desapariciones anuales por sexenio",
+    x = NULL, y = "Total", fill = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+## 6. Estados más relevantes
+
+```{r}
+# Top 10 estados por volumen total en el período
+top_estados <- data_limpio %>%
+  count(CVE_ENT, ENTIDAD, name = "total", sort = TRUE) %>%
+  head(10)
+
+top_estados
+```
+
+```{r}
+# Serie mensual por estado — facets para no saturar una sola gráfica
+data_limpio %>%
+  filter(ENTIDAD %in% top_estados$ENTIDAD) %>%
+  group_by(PERIODO, ENTIDAD) %>%
+  summarise(desaparecidos = n(), .groups = "drop") %>%
+  ggplot(aes(x = PERIODO, y = desaparecidos, color = ENTIDAD)) +
+  geom_line(linewidth = 0.8) +
+  geom_vline(
+    xintercept = as.Date("2018-12-01"),
+    color = "#E53935", linetype = "dashed", linewidth = 0.7
+  ) +
+  facet_wrap(~ENTIDAD, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Desapariciones mensuales — Top 10 estados (2014–2024)",
+    x = NULL, y = "Casos"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+
+## 7. Correlación con violencia (SESNSP)
+
+```{r}
+homicidios_nacional <- ts %>%
+  mutate(PERIODO = as.Date(PERIODO)) %>%
+  filter(
+    DELITO %in% c("Homicidio doloso", "Feminicidio"),
+    year(PERIODO) >= 2014,
+    year(PERIODO) <= 2024
+  ) %>%
+  group_by(PERIODO) %>%
+  summarise(homicidios = sum(TOTAL), .groups = "drop")
+
+correlacion <- serie_nacional %>%
+  inner_join(homicidios_nacional, by = "PERIODO") %>%
+  mutate(SEXENIO = if_else(
+    PERIODO < as.Date("2018-12-01"), "Peña Nieto", "AMLO"
+  ))
+```
+
+```{r}
+# Eje secundario escalado para comparar las dos series
+escala <- max(correlacion$homicidios) / max(correlacion$desaparecidos)
+
+ggplot(correlacion, aes(x = PERIODO)) +
+  geom_line(aes(y = desaparecidos, color = "Desaparecidos"), linewidth = 1) +
+  geom_line(aes(y = homicidios / escala, color = "Homicidios dolosos"), linewidth = 1) +
+  geom_vline(
+    xintercept = as.Date("2018-12-01"),
+    color = "black", linetype = "dashed", linewidth = 0.8
+  ) +
+  scale_y_continuous(
+    name      = "Personas desaparecidas",
+    sec.axis  = sec_axis(~ . * escala, name = "Homicidios dolosos")
+  ) +
+  scale_color_manual(values = c(
+    "Desaparecidos"      = "#534AB7",
+    "Homicidios dolosos" = "#E07B39"
+  )) +
+  labs(
+    title = "Desapariciones vs. homicidios dolosos en México (2014–2024)",
+    x = NULL, color = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "top")
+```
+
+```{r}
+# Coeficiente de correlación por sexenio
+correlacion %>%
+  group_by(SEXENIO) %>%
+  summarise(
+    r_pearson    = round(cor(desaparecidos, homicidios), 3),
+    n_meses      = n(),
+    media_desap  = round(mean(desaparecidos), 1),
+    media_hom    = round(mean(homicidios), 1),
+    .groups = "drop"
+  )
+```
+
+## 8. Mapa interactivo
+
+```{r}
+estados_geo <- st_read("assets/mexico.json", quiet = TRUE)
+
+# CVE_ENT en data es entero (1, 2, ...), CVEGEO en GeoJSON es string ("01", "02", ...)
+desap_geo <- data_limpio %>%
+  group_by(CVE_ENT) %>%
+  summarise(desaparecidos = n(), .groups = "drop") %>%
+  mutate(CVEGEO = sprintf("%02d", as.integer(CVE_ENT)))
+
+estados_geo <- estados_geo %>%
+  left_join(desap_geo, by = "CVEGEO")
+
+pal <- colorNumeric("YlOrRd", estados_geo$desaparecidos, na.color = "#cccccc")
+
+leaflet(estados_geo) %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  addPolygons(
+    fillColor   = ~pal(desaparecidos),
+    fillOpacity = 0.75,
+    color       = "white",
+    weight      = 1,
+    popup       = ~paste0(
+      "<b>", NOMGEO, "</b><br>",
+      format(desaparecidos, big.mark = ","), " desapariciones (2014–2024)"
+    )
+  ) %>%
+  addLegend(
+    pal      = pal,
+    values   = ~desaparecidos,
+    title    = "Desapariciones<br>(2014–2024)",
+    position = "bottomright"
+  )
+
+
+
+```
