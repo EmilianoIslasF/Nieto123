@@ -1,0 +1,42 @@
+# MacOS
+.DS_Store
+
+# R
+.Rhistory
+.RData
+.Ruserdata
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# Large outputs
+outputs/mcmc/
+outputs/maps/
+outputs/figures/
+
+# Model artifacts
+*.rds
+*.RDS
+*.RData
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Quarto / Knit
+*_files/
+
+# Environment files
+.env
+.venv/
+venv/
