@@ -1,6 +1,6 @@
 ---
 title: "EDA Espacial de Desapariciones en CDMX"
-author: "Tu Nombre"
+author: "Andrés Padrón"
 date: "`r Sys.Date()`"
 output: html_document
 ---
