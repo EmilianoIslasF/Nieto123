@@ -1,0 +1,174 @@
+---
+title: "Construcción de Vecindad y Dependencia Espacial"
+author: "Andrés Padrón"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Introducción
+
+En este documento se construye la estructura espacial de las alcaldías de la Ciudad de México mediante matrices de vecindad y medidas de autocorrelación espacial. El objetivo es evaluar si las desapariciones presentan dependencia espacial entre alcaldías vecinas.
+
+```{r}
+library(tidyverse)
+library(sf)
+library(spdep)
+library(tmap)
+```
+
+# Base espacial agregada
+
+```{r}
+data <- read_csv("../data/processed/data_final.csv")
+
+spatial_data <- data %>%
+  group_by(nom_alcaldia) %>%
+  summarise(
+    desaparecidos = sum(n_desapariciones),
+    homicidios = mean(n_homicidios),
+    robos = mean(n_robos),
+    violencia = mean(n_violencia_familiar),
+    pct_seguridad = mean(pct_seguros_cdmx, na.rm = TRUE),
+    poblacion = mean(pob_total)
+  )
+
+spatial_data
+```
+
+
+
+
+```{r}
+cdmx_map <- st_read("../data/raw/cdmx_alcaldias.json")
+
+cdmx_map
+```
+```{r}
+names(cdmx_map)
+```
+
+```{r}
+unique(cdmx_map$NOMGEO)
+```
+
+# Corrección de encoding
+
+```{r}
+spatial_data <- data %>%
+  mutate(
+    nom_alcaldia = case_when(
+      str_detect(nom_alcaldia, "Benito") ~ "Benito Juárez",
+      str_detect(nom_alcaldia, "Coyoac") ~ "Coyoacán",
+      str_detect(nom_alcaldia, "Cuauht") ~ "Cuauhtémoc",
+      str_detect(nom_alcaldia, "Obreg") ~ "Álvaro Obregón",
+      str_detect(nom_alcaldia, "Tlalpan") ~ "Tlalpan",
+      str_detect(nom_alcaldia, "huac") ~ "Tláhuac",
+      TRUE ~ nom_alcaldia
+    )
+  ) %>%
+  group_by(nom_alcaldia) %>%
+  summarise(
+    desaparecidos = sum(n_desapariciones),
+    homicidios = mean(n_homicidios),
+    robos = mean(n_robos),
+    violencia = mean(n_violencia_familiar),
+    pct_seguridad = mean(pct_seguros_cdmx, na.rm = TRUE),
+    poblacion = mean(pob_total),
+    .groups = "drop"
+  )
+```
+# Unión espacial
+
+```{r}
+map_data <- cdmx_map %>%
+  left_join(
+    spatial_data,
+    by = c("NOMGEO" = "nom_alcaldia")
+  )
+
+sum(is.na(map_data$desaparecidos))
+```
+
+# Mapa de desapariciones
+
+```{r}
+tm_shape(map_data) +
+  tm_polygons(
+    "desaparecidos",
+    palette = "Reds",
+    title = "Desapariciones"
+  )
+```
+# Vecinos espaciales
+
+```{r}
+neighbors <- poly2nb(map_data)
+
+neighbors
+```
+# Grafo de vecindad
+
+```{r}
+coords <- st_coordinates(st_centroid(map_data))
+
+plot(
+  st_geometry(map_data),
+  border = "gray40",
+  lwd = 1.2,
+  main = "Grafo de vecindad entre alcaldías"
+)
+
+plot(
+  neighbors,
+  coords,
+  add = TRUE,
+  col = "blue",
+  lwd = 1.5,
+  pch = 19,
+  cex = 0.7
+)
+```
+
+# Pesos espaciales
+
+```{r}
+weights <- nb2listw(
+  neighbors,
+  style = "W"
+)
+```
+
+
+# Moran's I
+
+```{r}
+moran.test(
+  map_data$desaparecidos,
+  weights
+)
+```
+
+
+
+El índice de Moran global para el número de desapariciones fue cercano a cero y no significativo. Esto sugiere que, al considerar las desapariciones agregadas por alcaldía, no existe evidencia estadística suficiente de autocorrelación espacial global. En otras palabras, los valores altos o bajos de desapariciones no parecen agruparse sistemáticamente entre alcaldías vecinas bajo esta matriz de vecindad.
+
+Sin embargo, este resultado no descarta heterogeneidad territorial. El mapa muestra concentración importante en ciertas alcaldías como Iztapalapa, Gustavo A. Madero y Cuauhtémoc. Por ello, el análisis espacial bayesiano puede ser útil para suavizar riesgos relativos y evaluar efectos espaciales residuales, incluso si la autocorrelación global no resulta significativa.
+
+```{r}
+W <- nb2mat(
+  neighbors,
+  style = "B",
+  zero.policy = TRUE
+)
+
+W
+```
+
+```{r}
+write.csv(
+  W,
+  "../data/processed/adjacency_matrix_cdmx.csv",
+  row.names = FALSE
+)
+```
+
