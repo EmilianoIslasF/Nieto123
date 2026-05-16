@@ -1,0 +1,17 @@
+model {
+  for (t in 1:n) {
+    # Verosimilitud: conteo de desapariciones ~ Poisson
+    y[t] ~ dpois(mu[t])
+
+    # Media: log-link con tendencia lineal + dummies de cambio de gobierno
+    log(mu[t]) <- beta[1] + beta[2]*t + beta[3]*post2018[t] + beta[4]*post2024[t]
+
+    # Predictiva
+    yf[t] ~ dpois(mu[t])
+  }
+
+  # Iniciales
+  for (j in 1:4) {
+    beta[j] ~ dnorm(0, 0.001)
+  }
+}

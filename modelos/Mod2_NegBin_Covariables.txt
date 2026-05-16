@@ -1,0 +1,22 @@
+model {
+  for (t in 1:n) {
+    # Verosimilitud: Binomial Negativa para manejar sobredispersion
+    y[t] ~ dnegbin(p[t], r)
+    p[t] <- r / (r + mu[t])
+
+    # Media: log-link con tendencia + dummies + covariables
+    log(mu[t]) <- beta[1] + beta[2]*t + beta[3]*post2018[t] + beta[4]*post2024[t]
+                  + beta[5]*pct_seguros[t] + beta[6]*n_delitos_lib[t]
+
+    # Predictiva
+    yf[t] ~ dnegbin(p[t], r)
+  }
+
+  # Iniciales para betas
+  for (j in 1:6) {
+    beta[j] ~ dnorm(0, 0.001)
+  }
+
+  # Parametro de sobredispersion: r > 0
+  r ~ dgamma(0.01, 0.01)
+}

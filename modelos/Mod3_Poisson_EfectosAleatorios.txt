@@ -1,0 +1,28 @@
+model {
+  for (i in 1:n) {
+    # Verosimilitud: conteo de desapariciones por alcaldia x mes
+    y[i] ~ dpois(mu[i])
+
+    # Media: log-link con efecto fijo de gobierno + efecto aleatorio por alcaldia
+    log(mu[i]) <- beta[1] + beta[2]*post2018[i] + beta[3]*post2024[i]
+                  + beta[4]*pct_seguros[i] + beta[5]*n_delitos_lib[i]
+                  + theta[alcaldia[i]] + log(offset[i])
+
+    # Predictiva
+    yf[i] ~ dpois(mu[i])
+  }
+
+  # Efectos aleatorios por alcaldia: theta_k ~ N(0, tau_b)
+  for (k in 1:K) {
+    theta[k] ~ dnorm(0, tau.b)
+  }
+
+  # Iniciales para betas (efectos fijos)
+  for (j in 1:5) {
+    beta[j] ~ dnorm(0, 0.001)
+  }
+
+  # Precision del efecto aleatorio
+  tau.b ~ dgamma(0.01, 0.01)
+  sig.b <- 1 / sqrt(tau.b)
+}
