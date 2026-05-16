@@ -1,0 +1,440 @@
+# Modelos Espaciales Bayesianos para Desapariciones en CDMX
+
+## Objetivo
+
+El objetivo de este notebook es modelar espacialmente el número de desapariciones en las alcaldías de la Ciudad de México incorporando dependencia espacial entre regiones vecinas mediante modelos bayesianos espaciales tipo CAR/BYM.
+
+Se busca evaluar si existen patrones espaciales residuales después de controlar por variables relacionadas con violencia y criminalidad.
+
+### Librerías
+```{r}
+library(tidyverse)
+library(sf)
+library(spdep)
+library(CARBayes)
+library(coda)
+library(tmap)
+library(coda)
+```
+
+
+## Carga de datos
+```{r}
+data <- read_csv("../data/processed/data_final.csv")
+adj_matrix <- read_csv("../data/processed/adjacency_matrix_cdmx.csv")
+
+W <- as.matrix(adj_matrix)
+head(data)
+```
+
+## Variables utilizadas
+
+### Variable respuesta
+- n_desapariciones
+
+### Covariables
+- n_homicidios
+- n_robos
+- n_violencia_familiar
+- pct_seguros_cdmx
+- pob_total
+
+```{r}
+model_data <- data %>%
+  mutate(
+    nom_alcaldia = case_when(
+      str_detect(nom_alcaldia, "Benito") ~ "Benito Juárez",
+      str_detect(nom_alcaldia, "Coyoac") ~ "Coyoacán",
+      str_detect(nom_alcaldia, "Cuauht") ~ "Cuauhtémoc",
+      str_detect(nom_alcaldia, "Obreg") ~ "Álvaro Obregón",
+      str_detect(nom_alcaldia, "Tlalpan") ~ "Tlalpan",
+      str_detect(nom_alcaldia, "huac") ~ "Tláhuac",
+      TRUE ~ nom_alcaldia
+    )
+  ) %>%
+  group_by(nom_alcaldia) %>%
+  summarise(
+    n_desapariciones = sum(n_desapariciones),
+    n_homicidios = mean(n_homicidios),
+    n_robos = mean(n_robos),
+    n_violencia_familiar = mean(n_violencia_familiar),
+    pct_seguros_cdmx = mean(pct_seguros_cdmx, na.rm = TRUE),
+    pob_total = mean(pob_total),
+    .groups = "drop"
+  )
+
+dim(model_data)
+dim(W)
+```
+
+
+## Modelo Poisson no espacial
+
+Como punto de partida se ajusta un modelo Poisson clásico sin estructura espacial.
+
+El número de desapariciones por alcaldía se modela inicialmente mediante una distribución Poisson:
+
+\[
+Y_i \sim \text{Poisson}(\mu_i)
+\]
+
+donde \(Y_i\) representa el número observado de desapariciones en la alcaldía \(i\), y \(\mu_i\) corresponde a la tasa esperada de desapariciones.
+
+Para relacionar la media \(\mu_i\) con las variables explicativas se utiliza una función de enlace logarítmica:
+
+\[
+\log(\mu_i) =
+\beta_0 +
+\beta_1(\text{homicidios}_i) +
+\beta_2(\text{robos}_i) +
+\beta_3(\text{violencia familiar}_i) +
+\beta_4(\text{seguros}_i) +
+\beta_5(\text{población}_i)
+\]
+
+Este modelo sirve como línea base antes de incorporar dependencia espacial mediante el modelo CAR.
+
+```{r}
+modelo_poisson <- glm(
+  n_desapariciones ~
+    n_homicidios +
+    n_robos +
+    n_violencia_familiar +
+    pct_seguros_cdmx +
+    pob_total,
+
+  family = poisson(link = "log"),
+
+  data = model_data
+)
+
+summary(modelo_poisson)
+```
+
+## Razones de incidencia
+
+Se obtienen las exponenciales de los coeficientes para interpretar los efectos multiplicativos sobre la tasa esperada de desapariciones.
+
+
+```{r}
+exp(coef(modelo_poisson))
+```
+## Coeficientes
+```{r}
+tabla_coef <- data.frame(
+  Variable = names(coef(modelo_poisson)),
+  Beta = coef(modelo_poisson),
+  IRR = exp(coef(modelo_poisson))
+)
+
+tabla_coef
+```
+## Interpretación del modelo Poisson clásico
+
+Los resultados del modelo Poisson muestran evidencia de asociación entre distintas variables relacionadas con criminalidad y violencia respecto al número esperado de desapariciones en las alcaldías de la Ciudad de México.
+
+Dado que el modelo utiliza una función de enlace logarítmica, los coeficientes pueden interpretarse mediante razones de incidencia (Incidence Rate Ratios, IRR):
+
+\[
+IRR = e^{\beta}
+\]
+
+donde valores mayores a 1 indican incrementos esperados en el número de desapariciones y valores menores a 1 indican reducciones esperadas.
+
+La variable de homicidios presenta un efecto positivo y estadísticamente significativo (\(p=0.0248\)). El valor estimado de \(IRR = 1.034\) indica que un incremento de una unidad en la tasa de homicidios se asocia con un aumento aproximado de 3.4\% en el número esperado de desapariciones, manteniendo constantes las demás variables.
+
+Por su parte, la variable de robos también muestra una asociación positiva altamente significativa (\(p<2\times10^{-16}\)). Aunque el efecto marginal por unidad es pequeño (\(IRR = 1.0011\)), incrementos acumulados en la incidencia de robos pueden representar aumentos importantes en el número esperado de desapariciones.
+
+Asimismo, la violencia familiar presenta un efecto positivo y significativo (\(p=0.000118\)), con un \(IRR = 1.0054\). Esto sugiere que mayores niveles de violencia intrafamiliar se asocian con incrementos en el fenómeno de desapariciones, posiblemente reflejando dinámicas estructurales de violencia territorial.
+
+En contraste, el porcentaje de seguros no resulta estadísticamente significativo (\(p=0.662\)), por lo que no se encuentra evidencia suficiente para afirmar una asociación relevante con el número esperado de desapariciones dentro del modelo ajustado.
+
+Finalmente, la variable de población presenta un coeficiente negativo y significativo (\(p=1.19\times10^{-5}\)). Aunque el efecto marginal es pequeño (\(IRR \approx 0.999999\)), esto podría reflejar efectos de escala poblacional o colinealidad con otras variables territoriales incluidas en el modelo.
+
+En términos generales, el modelo Poisson clásico logra capturar asociaciones relevantes entre variables de criminalidad y desapariciones. Sin embargo, este enfoque supone independencia entre observaciones geográficas, ignorando posibles patrones de dependencia espacial entre alcaldías vecinas.
+
+
+# Modelo espacial Bayesiano CAR Leroux
+
+Debido a que el modelo Poisson clásico asume independencia entre observaciones geográficas, resulta necesario incorporar explícitamente dependencia espacial entre alcaldías vecinas.
+
+Para ello se ajusta un modelo espacial Bayesiano tipo CAR (Conditional Autoregressive) bajo la parametrización de Leroux.
+
+Sea:
+
+\[
+Y_i \sim Poisson(\mu_i)
+\]
+
+con:
+
+\[
+\log(\mu_i)=X_i\beta+\phi_i
+\]
+
+donde:
+
+- \(X_i\beta\) representa el componente fijo asociado a las covariables,
+- \(\phi_i\) representa el efecto espacial estructurado,
+- \(W\) corresponde a la matriz de adyacencia espacial entre alcaldías.
+
+Este enfoque permite modelar autocorrelación espacial residual mediante un proceso CAR dependiente de la estructura de vecindad.
+
+## Preparación de la matriz espacial
+
+```{r}
+W <- as.matrix(adj_matrix)
+
+dim(W)
+
+W[1:5, 1:5]
+```
+
+## Modelo espacial CAR Bayesiano
+
+Se incorpora dependencia espacial utilizando un modelo CAR tipo Leroux.
+
+```{r}
+set.seed(123)
+
+modelo_car_1 <- S.CARleroux(
+  formula = n_desapariciones ~
+    n_homicidios +
+    n_robos +
+    n_violencia_familiar +
+    pct_seguros_cdmx +
+    offset(log(pob_total)),
+  family = "poisson",
+  data = model_data,
+  W = W,
+  burnin = 10000,
+  n.sample = 50000,
+  thin = 10
+)
+
+set.seed(456)
+
+modelo_car_2 <- S.CARleroux(
+  formula = n_desapariciones ~
+    n_homicidios +
+    n_robos +
+    n_violencia_familiar +
+    pct_seguros_cdmx +
+    offset(log(pob_total)),
+  family = "poisson",
+  data = model_data,
+  W = W,
+  burnin = 10000,
+  n.sample = 50000,
+  thin = 10
+)
+```
+```{r}
+names(modelo_car_1$samples)
+```
+
+```{r}
+# Diagnóstico MCMC estilo notas del profesor
+
+out1 <- modelo_car_1$samples$beta
+out2 <- modelo_car_2$samples$beta
+
+z1 <- out1[, 1]
+z2 <- out2[, 1]
+
+par(mfrow = c(3, 2))
+
+# Traza
+plot(z1, type = "l", col = "grey50",
+     main = "Traza beta[1] - cadena 1",
+     ylab = "beta[1]", xlab = "Iteración")
+lines(z2, col = "firebrick2")
+
+# Media acumulada
+y1 <- cumsum(z1) / seq_along(z1)
+y2 <- cumsum(z2) / seq_along(z2)
+
+ymin <- min(y1, y2)
+ymax <- max(y1, y2)
+
+plot(y1, type = "l", col = "grey50",
+     ylim = c(ymin, ymax),
+     main = "Media acumulada beta[1]",
+     ylab = "Media acumulada", xlab = "Iteración")
+lines(y2, col = "firebrick2")
+
+# Histogramas
+hist(z1, freq = FALSE, col = "grey50",
+     main = "Histograma cadena 1",
+     xlab = "beta[1]")
+
+hist(z2, freq = FALSE, col = "firebrick2",
+     main = "Histograma cadena 2",
+     xlab = "beta[1]")
+
+# ACF
+acf(z1, main = "ACF cadena 1")
+acf(z2, main = "ACF cadena 2")
+```
+
+```{r}
+summary(modelo_car_1)
+modelo_car_1$modelfit
+```
+## Interpretación del modelo CAR Leroux
+
+El modelo espacial CAR Leroux incorpora dependencia espacial entre alcaldías vecinas mediante un efecto aleatorio estructurado espacialmente.
+
+A diferencia del modelo Poisson clásico, este enfoque permite capturar autocorrelación espacial residual, es decir, similitudes geográficas no explicadas completamente por las covariables observadas.
+
+Los diagnósticos MCMC muestran un comportamiento adecuado de convergencia:
+
+- Las trazas presentan oscilaciones estables sin tendencias sistemáticas.
+- Las medias acumuladas convergen rápidamente hacia valores estables.
+- Las distribuciones posteriores son aproximadamente unimodales.
+- Las funciones de autocorrelación decrecen progresivamente conforme aumenta el lag.
+
+En conjunto, estos resultados sugieren que las cadenas alcanzaron estacionariedad y que el muestreo MCMC fue adecuado.
+
+## Ajuste del modelo espacial
+
+El modelo CAR obtuvo:
+
+- DIC = 133.59
+- WAIC = 132.57
+
+En comparación con el modelo Poisson clásico (AIC = 218.39), el modelo espacial presenta una mejora sustancial en ajuste.
+
+Esto sugiere que existe estructura espacial relevante en los datos de desapariciones entre alcaldías de la Ciudad de México.
+
+La incorporación del componente espacial permite capturar heterogeneidad geográfica y dependencia entre regiones vecinas que no es considerada por el modelo Poisson tradicional.
+
+## Valores ajustados del CAR
+```{r}
+cdmx_map <- st_read("../data/raw/cdmx_alcaldias.json")
+
+map_data <- cdmx_map %>%
+  left_join(
+    model_data,
+    by = c("NOMGEO" = "nom_alcaldia")
+  )
+```
+
+```{r}
+map_data$ajustado_car <- modelo_car_1$fitted.values
+```
+
+```{r}
+tm_shape(map_data) +
+  tm_polygons(
+    "ajustado_car",
+    palette = "Reds",
+    title = "Desapariciones ajustadas"
+  ) +
+  tm_layout(
+    main.title = "Valores ajustados - Modelo CAR",
+    legend.outside = TRUE
+  )
+``` 
+Los valores ajustados del modelo CAR representan el número esperado de desapariciones en cada alcaldía después de incorporar explícitamente dependencia espacial entre regiones vecinas.
+
+En comparación con el modelo Poisson clásico, el modelo espacial produce estimaciones más suaves y geográficamente coherentes, capturando patrones regionales compartidos entre alcaldías adyacentes.
+
+Se observa que alcaldías como Iztapalapa continúan presentando niveles elevados de desapariciones ajustadas, mientras que otras regiones muestran intensidades intermedias consistentes con la estructura espacial observada en la Ciudad de México.
+
+Estos resultados sugieren que el modelo CAR logra representar adecuadamente la heterogeneidad espacial presente en los datos, reduciendo parte de la variabilidad no explicada mediante el componente espacial estructurado.
+
+## Residuales espaciales
+
+Los residuales permiten identificar alcaldías donde el modelo CAR subestima o sobreestima el número observado de desapariciones.
+
+```{r}
+map_data$residuales_car <- 
+  map_data$n_desapariciones - map_data$ajustado_car
+```
+
+```{r}
+tm_shape(map_data) +
+  tm_polygons(
+    "residuales_car",
+    palette = "-RdBu",
+    style = "cont",
+    title = "Residuales"
+  ) +
+  tm_layout(
+    main.title = "Residuales espaciales - Modelo CAR",
+    legend.outside = TRUE
+  )
+```
+
+### Interpretación de los residuales espaciales
+
+Los residuales muestran la diferencia entre el número observado de desapariciones y los valores ajustados por el modelo CAR.
+
+Las alcaldías con residuales cercanos a cero indican un buen ajuste del modelo, mientras que residuales grandes sugieren zonas donde el modelo sobreestima o subestima los casos observados.
+
+En el mapa se observa que algunas alcaldías del sur y oriente presentan residuales negativos importantes, lo que indica que el modelo CAR sobreestima el número esperado de desapariciones en esas regiones. Por otro lado, ciertas alcaldías del norte presentan residuales positivos, sugiriendo que el modelo subestima parcialmente los valores observados.
+
+En general, los residuales no muestran un patrón espacial completamente estructurado, lo cual sugiere que el componente espacial del modelo CAR logró capturar parte importante de la dependencia geográfica presente en los datos.
+
+# Conclusiones
+
+Se ajustó inicialmente un modelo Poisson clásico para explicar el número de desapariciones en las alcaldías de la Ciudad de México utilizando variables relacionadas con violencia, robos, homicidios y penetración de seguros.
+
+Los resultados mostraron que variables como el número de robos, homicidios y violencia familiar presentan asociaciones positivas y estadísticamente significativas con el número esperado de desapariciones. Posteriormente, se incorporó una estructura espacial mediante un modelo CAR de Leroux utilizando una matriz de adyacencia entre alcaldías.
+
+El modelo espacial presentó un menor DIC respecto al modelo inicial, indicando un mejor ajuste al considerar dependencia espacial entre regiones vecinas. Además, los diagnósticos MCMC mostraron convergencia adecuada de las cadenas y estabilidad en las distribuciones posteriores.
+
+Finalmente, los mapas de valores ajustados y residuales permitieron visualizar patrones geográficos relevantes y confirmar que el modelo CAR captura de manera razonable la heterogeneidad espacial presente en la Ciudad de México.
+
+```{r}
+map_data$observado <- map_data$n_desapariciones
+
+tm_shape(map_data) +
+  tm_polygons(
+    c("observado", "ajustado_car"),
+    palette = "Reds",
+    style = "quantile"
+  ) +
+  tm_layout(legend.outside = TRUE)
+```
+```{r}
+phi_mean <- apply(modelo_car_1$samples$phi,
+                  2,
+                  mean)
+
+map_data$phi_mean <- phi_mean
+```
+
+```{r}
+tm_shape(map_data) +
+  tm_polygons(
+    "phi_mean",
+    palette = "-RdBu",
+    style = "cont",
+    title = "Efecto espacial"
+  ) +
+  tm_layout(
+    main.title = "Efectos espaciales aleatorios (phi)",
+    legend.outside = TRUE
+  )
+```
+
+### Interpretación de los efectos espaciales aleatorios (\(\phi_i\))
+
+El mapa de efectos espaciales aleatorios representa la componente espacial residual capturada por el modelo CAR después de controlar por las variables explicativas incluidas en el modelo, tales como homicidios, robos, violencia familiar y penetración de seguros.
+
+En el modelo espacial, los efectos \(\phi_i\) permiten capturar heterogeneidad geográfica no observada y dependencia espacial entre alcaldías vecinas. Matemáticamente, estos efectos forman parte del predictor lineal:
+
+\[
+\log(\mu_i) = X_i\beta + \phi_i
+\]
+
+donde \(X_i\beta\) representa el efecto de las covariables observadas y \(\phi_i\) corresponde al efecto espacial latente.
+
+En el mapa se observan alcaldías con efectos espaciales positivos (tonos rojos), indicando regiones donde el riesgo de desapariciones es mayor al esperado incluso después de controlar por las variables incluidas en el modelo. Esto sugiere la existencia de factores espaciales adicionales no observados que podrían influir en el fenómeno, como dinámicas territoriales, movilidad, presencia de grupos delictivos o condiciones socioeconómicas locales.
+
+Por otro lado, los efectos espaciales negativos (tonos azules) representan alcaldías con menor riesgo relativo al esperado por el modelo, indicando zonas donde la incidencia observada resulta relativamente baja una vez considerados los factores explicativos.
+
+Asimismo, se aprecia cierta agrupación geográfica de los efectos espaciales, lo cual evidencia la presencia de autocorrelación espacial entre alcaldías vecinas. Esto confirma la pertinencia de utilizar un modelo CAR en lugar de un modelo Poisson clásico independiente.
+
