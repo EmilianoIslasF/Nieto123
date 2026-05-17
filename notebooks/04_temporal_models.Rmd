@@ -1,0 +1,900 @@
+---
+title: "Modelos Temporales — Desapariciones en CDMX"
+author: "Equipo"
+output: html_document
+date: "2026-05-17"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(R2jags)
+library(tidyverse)
+library(sf)
+library(corrplot)
+```
+
+```{r, include=FALSE}
+# Función para calcular probabilidad posterior de signo
+
+prob <- function(x) {
+  out <- min(length(x[x > 0]) / length(x), length(x[x < 0]) / length(x))
+  out
+}
+```
+
+# 1. Lectura y preparación de datos
+```{r}
+# LECTURA Y PREPARACION DE DATOS
+data <- read_csv("../data/processed/data_final.csv")
+```
+
+```{r}
+panel <- read.csv("../data/processed/data_final.csv")
+names(panel)
+# n_delitos_libertad significa "Delitos contra la libertad personal", que incluye secuestros, extorsiones, etc. Es una variable relevante para modelar desapariciones, ya que puede capturar el contexto de violencia y riesgo en el que ocurren las desapariciones.
+
+# pct_seguros_cdmx es el porcentaje de personas que se sienten seguras en la Ciudad de México (fuente: ENVIPE/Monitor CDMX, interpolado mensualmente). Varía en el tiempo pero no entre alcaldías.
+
+
+```
+
+```{r}
+# --------------------------------------------------------------
+# Serie agregada CDMX mensual (Modelos 1,2 y 3)
+# --------------------------------------------------------------
+# Conteos: suma entre alcaldías
+agg_counts <- aggregate(
+  cbind(n_desapariciones, n_homicidios, n_robos, n_violencia_familiar,
+        pct_seguros_cdmx, pob_total) ~ anio + mes,
+  data = panel,
+  FUN  = sum
+)
+# Indicadores binarios: mismo valor para todas las alcaldías en el mismo mes
+agg_flags <- aggregate(
+  cbind(post_2018, post_2024) ~ anio + mes,
+  data = panel,
+  FUN  = function(x) x[1]
+)
+agg <- merge(agg_counts, agg_flags, by = c("anio", "mes"))
+agg <- agg[order(agg$anio, agg$mes), ]
+agg
+
+```
+
+
+```{r}
+# Estandarizar covariables continuas para evitar problemas numéricos
+agg$homicidios_std  <- scale(agg$n_homicidios)[, 1]
+agg$robos_std       <- scale(agg$n_robos)[, 1]
+agg$violencia_std   <- scale(agg$n_violencia_familiar)[, 1]
+agg$pct_seguros_std <- scale(agg$pct_seguros_cdmx)[, 1]
+
+# Offset de población — log(pob_total_CDMX / 100k)
+agg$offset <- log(agg$pob_total / 100000)
+
+# Indice temporal (1 a n)
+n   <- nrow(agg)
+t   <- 1:n
+```
+
+
+```{r}
+plot(agg$anio + agg$mes / 12, agg$n_desapariciones, type = "b", xlab = "Año", ylab = "Número de Desapariciones", main = "Serie Temporal de Desapariciones en CDMX")
+```
+```{r}
+# -------------------------------------------------------------------
+# Panel alcaldia x mes - Modelo 3
+# -------------------------------------------------------------------
+panel_clean <- panel[!is.na(panel$pct_seguros_cdmx) & !is.na(panel$pob_total), ]
+n_panel     <- nrow(panel_clean)
+K           <- length(unique(panel_clean$CVE_MUN))   # 16 alcaldias
+
+# Reindexar CVE_MUN a 1:16
+panel_clean$alcaldia_idx <- as.integer(factor(panel_clean$CVE_MUN))
+
+# Offset: log(poblacion / 100000) para modelar tasa por 100k
+panel_clean$offset <- panel_clean$pob_total / 100000
+
+panel_clean$homicidios_std  <- scale(panel_clean$n_homicidios)[, 1]
+panel_clean$robos_std       <- scale(panel_clean$n_robos)[, 1]
+panel_clean$violencia_std   <- scale(panel_clean$n_violencia_familiar)[, 1]
+panel_clean$pct_seguros_std <- scale(panel_clean$pct_seguros_cdmx)[, 1]
+
+
+```
+
+# 2. Análisis exploratorio
+
+```{r}
+# Serie temporal nacional con cambios de gobierno marcados
+plot(agg$anio + agg$mes / 12, agg$n_desapariciones,
+     type = "l", col = "grey50", lwd = 1.5,
+     xlab = "Año", ylab = "Desapariciones mensuales",
+     main = "Desapariciones mensuales en CDMX (2015–2024)")
+abline(v = 2018 + 11/12, col = "steelblue", lty = 2, lwd = 1.5)
+abline(v = 2024 + 9/12,  col = "darkgreen",  lty = 2, lwd = 1.5)
+legend("topright",
+       legend = c("Desapariciones",
+                  "Inicio AMLO (dic-2018)",
+                  "Inicio Brugada (oct-2024)"),
+       col = c("grey50", "steelblue", "darkgreen"),
+       lty = c(1, 2, 2), bty = "n")
+```
+
+```{r fig.width=10, fig.height=8}
+# Serie por alcaldía — facetas para ver cada una claramente
+panel_plot <- panel[!is.na(panel$pct_seguros_cdmx) &
+                    !is.na(panel$pob_total), ]
+panel_plot$fecha <- as.Date(panel_plot$fecha)
+ggplot(panel_plot,
+       aes(x = fecha, y = n_desapariciones)) +
+  geom_line(color = "steelblue", linewidth = 0.6) +
+  facet_wrap(~ nom_alcaldia, scales = "free_y", ncol = 4) +
+  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+  labs(title = "Desapariciones mensuales por alcaldía — CDMX",
+       x = "Año", y = "Desapariciones") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 6),
+        strip.text  = element_text(size = 7))
+```
+
+```{r fig.width=7, fig.height=5}
+# Desapariciones por sexo a lo largo del tiempo
+panel %>%
+  mutate(fecha_mes = as.Date(
+    paste(anio, sprintf("%02d", mes), "01", sep = "-"))) %>%
+  group_by(fecha_mes) %>%
+  summarise(Hombres = sum(n_hombres, na.rm = TRUE),
+            Mujeres = sum(n_mujeres, na.rm = TRUE),
+            .groups = "drop") %>%
+  pivot_longer(c(Hombres, Mujeres),
+               names_to = "Sexo", values_to = "n") %>%
+  ggplot(aes(x = fecha_mes, y = n, color = Sexo)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = c("Hombres" = "steelblue",
+                                "Mujeres" = "firebrick2")) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+  geom_vline(xintercept = as.Date("2018-12-01"),
+             color = "grey40", lty = 2) +
+  geom_vline(xintercept = as.Date("2024-10-01"),
+             color = "grey40", lty = 2) +
+  labs(title = "Desapariciones mensuales por sexo — CDMX",
+       x = "Año", y = "Desapariciones", color = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r fig.width=6, fig.height=5}
+# Total acumulado por alcaldía
+panel %>%
+  group_by(nom_alcaldia) %>%
+  summarise(total = sum(n_desapariciones), .groups = "drop") %>%
+  ggplot(aes(x = reorder(nom_alcaldia, total), y = total)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Total de desapariciones por alcaldía (2015–2024)",
+       x = NULL, y = "Total acumulado") +
+  theme_minimal()
+```
+```{r fig.width=6, fig.height=5}
+# Correlación entre variables del modelo
+vars_cor <- panel %>%
+  mutate(fecha_mes = as.Date(
+    paste(anio, sprintf("%02d", mes), "01", sep = "-"))) %>%
+  group_by(fecha_mes) %>%
+  summarise(desapariciones = sum(n_desapariciones),
+            homicidios     = sum(n_homicidios),
+            delitos_lib    = sum(n_delitos_libertad),
+            pct_seguros    = mean(pct_seguros_cdmx, na.rm = TRUE),
+            .groups = "drop") %>%
+  select(-fecha_mes) %>%
+  cor(use = "complete.obs")
+
+corrplot(vars_cor,
+         method      = "color",
+         type        = "upper",
+         addCoef.col = "black",
+         tl.col      = "black",
+         number.cex  = 0.8,
+         tl.cex      = 0.9,
+         title       = "Correlación entre variables del modelo",
+         mar         = c(0, 0, 2, 0))
+```
+
+# 3. Modelo 1 — Poisson con dummies de cambio de gobierno
+
+Modelo baseline con coeficientes **fijos**. Captura si en promedio hubo
+más desapariciones después del cambio de sexenio, sin incorporar dinámica.
+
+```{r}
+# =================================================================== #
+# MODELO 1 — Poisson con dummies de cambio de gobierno
+#            Serie agregada CDMX, variable dependiente: n_desapariciones
+# =================================================================== #
+
+data1 <- list("n"          = n,
+              "y"          = as.integer(agg$n_desapariciones),
+              "homicidios" = agg$homicidios_std,
+              "robos"      = agg$robos_std,
+              "violencia"  = agg$violencia_std,
+              "pct_seguros"= agg$pct_seguros_std,
+              "post2018"   = as.integer(agg$post_2018),
+              "offset"     = agg$offset)
+
+inits1 <- function() { list(beta = rep(0, 6), yf = rep(1, n)) }
+
+pars1 <- c("beta", "mu", "yf")
+
+mod1.sim <- jags(data1, inits1, pars1,
+                 model.file = "../modelos/Mod1_Poisson_Breakpoint.txt",
+                 n.iter   = 10000,
+                 n.chains = 2,
+                 n.burnin = 1000,
+                 n.thin   = 2)
+```
+
+```{r}
+# --- Diagnosticos Modelo 1 ---
+#traceplot(mod1.sim)
+
+out1.a   <- mod1.sim$BUGSoutput$sims.array
+out1     <- mod1.sim$BUGSoutput$sims.list
+out1.sum <- mod1.sim$BUGSoutput$summary
+
+# Cadenas beta[1] (intercept)
+z1 <- out1.a[, 1, 1]
+z2 <- out1.a[, 2, 1]
+par(mfrow = c(3, 2))
+plot(z1, type = "l", col = "grey50", main = "Mod1: traza beta[1]")
+lines(z2, col = "firebrick2")
+y1 <- cumsum(z1) / (1:length(z1))
+y2 <- cumsum(z2) / (1:length(z2))
+plot(y1, type = "l", col = "grey50", ylim = range(y1, y2))
+lines(y2, col = "firebrick2")
+hist(z1, freq = FALSE, col = "grey50")
+hist(z2, freq = FALSE, col = "firebrick2")
+acf(z1); acf(z2)
+```
+```{r}
+# Resumen de de estimadores betas
+out1.sum.t <- out1.sum[grep("beta", rownames(out1.sum)), c(1, 3, 7)]
+out1.sum.t <- cbind(out1.sum.t, apply(out1$beta, 2, prob))
+dimnames(out1.sum.t)[[2]][4] <- "prob"
+print("=== MODELO 1: Poisson Breakpoint ===")
+print(out1.sum.t)
+
+# DIC
+out1.dic <- mod1.sim$BUGSoutput$DIC
+print(c("DIC Mod1 =", out1.dic))
+```
+
+
+
+```{r}
+# Predicciones vs observado
+out1.yf <- out1.sum[grep("^yf", rownames(out1.sum)), ]
+y       <- agg$n_desapariciones
+ymin    <- min(y, out1.yf[, c(1, 3, 7)])
+ymax    <- max(y, out1.yf[, c(1, 3, 7)])
+par(mfrow = c(1, 1))
+plot(t, y, type = "l", col = "grey50",
+     ylim = c(ymin, ymax),
+     xlab = "Mes (índice)", ylab = "Desapariciones",
+     main = "Modelo 1: Poisson con Breakpoints")
+lines(t, out1.yf[, 1], lwd = 2, col = 2)
+lines(t, out1.yf[, 3], lty = 2, col = 2)
+lines(t, out1.yf[, 7], lty = 2, col = 2)
+abline(v = which(agg$post_2018 == 1)[1], col = "steelblue", lty = 3)
+abline(v = which(agg$post_2024 == 1)[1], col = "darkgreen",  lty = 3)
+legend("topright",
+       legend = c("Observado", "Media posterior", "IC 95%",
+                  "Cambio 2018", "Cambio 2024"),
+       col = c("grey50", 2, 2, "steelblue", "darkgreen"),
+       lty = c(1, 1, 2, 3, 3), bty = "n")
+
+```
+
+
+# 4. Modelo 2 — Binomial Negativa con covariables
+
+Extiende el Modelo 1 controlando por sobredispersión e incorporando
+percepción de seguridad y delitos contra la libertad como covariables fijas.
+
+```{r}
+# =================================================================== #
+# MODELO 2 — Binomial Negativa con covariables
+#            Controla sobredispersion + percepcion + delitos libertad
+# =================================================================== #
+
+data2 <- list("n"          = n,
+              "y"          = as.integer(agg$n_desapariciones),
+              "homicidios" = agg$homicidios_std,
+              "robos"      = agg$robos_std,
+              "violencia"  = agg$violencia_std,
+              "pct_seguros"= agg$pct_seguros_std,
+              "post2018"   = as.integer(agg$post_2018),
+              "offset"     = agg$offset)
+
+inits2 <- function() { list(beta = rep(0, 6), r = 1, yf = rep(1, n)) }
+pars2  <- c("beta", "r", "mu", "yf")
+
+mod2.sim <- jags(data2, inits2, pars2,
+                 model.file = "../modelos/Mod2_NegBin_Covariables.txt",
+                 n.iter   = 12000,
+                 n.chains = 2,
+                 n.burnin = 2000,
+                 n.thin   = 15)
+```
+
+```{r}
+# --- Diagnosticos Modelo 2 ---
+out2.a   <- mod2.sim$BUGSoutput$sims.array
+out2     <- mod2.sim$BUGSoutput$sims.list
+out2.sum <- mod2.sim$BUGSoutput$summary
+
+z1 <- out2.a[, 1, 1]
+z2 <- out2.a[, 2, 1]
+par(mfrow = c(3, 2))
+plot(z1, type = "l", col = "grey50", main = "Mod2: traza beta[1]")
+lines(z2, col = "firebrick2")
+y1 <- cumsum(z1) / (1:length(z1))
+y2 <- cumsum(z2) / (1:length(z2))
+plot(y1, type = "l", col = "grey50", ylim = range(y1, y2))
+lines(y2, col = "firebrick2")
+hist(z1, freq = FALSE, col = "grey50")
+hist(z2, freq = FALSE, col = "firebrick2")
+acf(z1); acf(z2)
+```
+
+```{r}
+# Resumen de betas
+out2.sum.t <- out2.sum[grep("beta", rownames(out2.sum)), c(1, 3, 7)]
+out2.sum.t <- cbind(out2.sum.t, apply(out2$beta, 2, prob))
+dimnames(out2.sum.t)[[2]][4] <- "prob"
+print("=== MODELO 2: Binomial Negativa con Covariables ===")
+print(out2.sum.t)
+print(paste("r (sobredispersion) =", round(out2.sum["r", 1], 3)))
+
+# DIC
+out2.dic <- mod2.sim$BUGSoutput$DIC
+print(c("DIC Mod2 =", out2.dic))
+```
+
+
+
+```{r}
+# Predicciones
+out2.yf <- out2.sum[grep("^yf", rownames(out2.sum)), ]
+y       <- agg$n_desapariciones
+ymin    <- min(y, out2.yf[, c(1, 3, 7)])
+ymax    <- max(y, out2.yf[, c(1, 3, 7)])
+par(mfrow = c(1, 1))
+plot(t, y, type = "l", col = "grey50",
+     ylim = c(ymin, ymax),
+     xlab = "Mes (índice)", ylab = "Desapariciones",
+     main = "Modelo 2: Binomial Negativa + Covariables")
+lines(t, out2.yf[, 1], lwd = 2, col = 3)
+lines(t, out2.yf[, 3], lty = 2, col = 3)
+lines(t, out2.yf[, 7], lty = 2, col = 3)
+abline(v = which(agg$post_2018 == 1)[1], col = "steelblue", lty = 3)
+abline(v = which(agg$post_2024 == 1)[1], col = "darkgreen",  lty = 3)
+legend("topright",
+       legend = c("Observado", "Media posterior", "IC 95%",
+                  "Cambio 2018", "Cambio 2024"),
+       col = c("grey50", 3, 3, "steelblue", "darkgreen"),
+       lty = c(1, 1, 2, 3, 3), bty = "n")
+
+
+```
+
+# 5. Modelo 3 — Poisson con efectos aleatorios por alcaldía
+
+Usa el panel alcaldía × mes. Incorpora efectos aleatorios θₖ ~ N(0, τ_b)
+para capturar heterogeneidad entre alcaldías. Offset = población / 100k
+para modelar tasas comparables entre alcaldías de distinto tamaño.
+
+```{r}
+# =================================================================== #
+# MODELO 3 — Poisson con efectos aleatorios por alcaldia (panel)
+#            Variable dependiente: n_desapariciones, offset = pob/100k
+# =================================================================== #
+
+data3 <- list("n"          = n_panel,
+              "K"          = K,
+              "y"          = as.integer(panel_clean$n_desapariciones),
+              "homicidios" = panel_clean$homicidios_std,
+              "robos"      = panel_clean$robos_std,
+              "violencia"  = panel_clean$violencia_std,
+              "pct_seguros"= panel_clean$pct_seguros_std,
+              "post2018"   = as.integer(panel_clean$post_2018),
+              "alcaldia"   = as.integer(panel_clean$alcaldia_idx),
+              "offset"     = panel_clean$offset)
+
+inits3 <- function() {
+  list(beta  = rep(0, 6),
+       theta = rep(0, K),
+       tau.b = 1,
+       yf    = rep(1, n_panel))
+}
+pars3 <- c("beta", "theta", "tau.b", "sig.b", "yf")
+
+mod3.sim <- jags(data3, inits3, pars3,
+                 model.file = "../modelos/Mod3_Poisson_EfectosAleatorios.txt",
+                 n.iter   = 10000,
+                 n.chains = 2,
+                 n.burnin = 1100,
+                 n.thin   = 3)
+```
+
+
+```{r}
+# --- Diagnosticos Modelo 3 ---
+out3.a   <- mod3.sim$BUGSoutput$sims.array
+out3     <- mod3.sim$BUGSoutput$sims.list
+out3.sum <- mod3.sim$BUGSoutput$summary
+
+z1 <- out3.a[, 1, 1]
+z2 <- out3.a[, 2, 1]
+par(mfrow = c(3, 2))
+plot(z1, type = "l", col = "grey50", main = "Mod3: traza beta[1]")
+lines(z2, col = "firebrick2")
+y1 <- cumsum(z1) / (1:length(z1))
+y2 <- cumsum(z2) / (1:length(z2))
+plot(y1, type = "l", col = "grey50", ylim = range(y1, y2))
+lines(y2, col = "firebrick2")
+hist(z1, freq = FALSE, col = "grey50")
+hist(z2, freq = FALSE, col = "firebrick2")
+acf(z1); acf(z2)
+
+```
+
+```{r}
+# Resumen de betas (efectos fijos)
+out3.sum.t <- out3.sum[grep("^beta", rownames(out3.sum)), c(1, 3, 7)]
+out3.sum.t <- cbind(out3.sum.t, apply(out3$beta, 2, prob))
+dimnames(out3.sum.t)[[2]][4] <- "prob"
+print("=== MODELO 3: Poisson con Efectos Aleatorios por Alcaldía ===")
+print(out3.sum.t)
+
+# DIC
+out3.dic <- mod3.sim$BUGSoutput$DIC
+print(c("DIC Mod3 =", out3.dic))
+```
+
+```{r fig.width=7, fig.height=6}
+# Efectos aleatorios por alcaldia — caterpillar plot horizontal
+out3.theta <- out3.sum[grep("^theta", rownames(out3.sum)), c(1, 3, 7)]
+
+# Mapeo índice → nombre de alcaldía
+mapeo   <- unique(panel_clean[, c("alcaldia_idx", "nom_alcaldia")])
+mapeo   <- mapeo[order(mapeo$alcaldia_idx), ]
+nombres <- mapeo$nom_alcaldia
+
+# Ordenar de menor a mayor efecto medio
+ord       <- order(out3.theta[, 1])
+theta_ord <- out3.theta[ord, ]
+nom_ord   <- nombres[ord]
+
+par(mfrow = c(1, 1), mar = c(4, 9, 3, 2))
+plot(theta_ord[, 1], 1:K,
+     xlim = range(theta_ord) * 1.05,
+     yaxt = "n",
+     xlab = expression(theta[k]),
+     ylab = "",
+     main = "Modelo 3: Efectos aleatorios por alcaldía (IC 95%)",
+     pch = 19, col = "steelblue", cex = 0.9)
+segments(theta_ord[, 2], 1:K, theta_ord[, 3], 1:K, col = "steelblue", lwd = 1.5)
+axis(2, at = 1:K, labels = nom_ord, las = 1, cex.axis = 0.8)
+abline(v = 0, col = "grey60", lty = 2)
+
+```
+
+Interpretación
+
+El Modelo 3 incorpora efectos aleatorios θₖ por alcaldía para 
+capturar heterogeneidad espacial no explicada por las covariables. 
+Los efectos estimados muestran que, tras controlar por homicidios, 
+robos, violencia familiar y percepción de seguridad, la mayoría 
+de las 16 alcaldías presentan efectos cercanos a cero con 
+intervalos de credibilidad al 95% que incluyen el cero, lo que 
+sugiere que las covariables incluidas explican adecuadamente la 
+variación entre alcaldías.
+
+Sin embargo, dos alcaldías destacan con efectos residuales 
+positivos: Milpa Alta (θ₈ ≈ +0.5) y Miguel Hidalgo (θ₁₅ ≈ +0.5). 
+Ambas registran más desapariciones de las esperadas dado su perfil 
+de violencia. El caso de Milpa Alta es particularmente notable 
+pues es una de las alcaldías con menor densidad poblacional y 
+menores índices de violencia en CDMX, lo que hace que su efecto 
+residual positivo sugiera factores estructurales locales no 
+capturados por el modelo — posiblemente relacionados con 
+características geográficas que facilitan la ocultación de casos 
+o subregistro diferencial. Miguel Hidalgo, por su parte, concentra 
+zonas de alta actividad económica y nocturna que podrían explicar 
+el exceso de casos.
+
+Por el contrario, Coyoacán (θ₂ ≈ -0.3), La Magdalena Contreras 
+(θ₇ ≈ -0.4), Álvaro Obregón (θ₉ ≈ -0.2) y Tláhuac (θ₁₀ ≈ -0.2) 
+presentan efectos negativos, registrando menos desapariciones 
+de las predichas por sus indicadores de violencia. Estos resultados 
+son consistentes con el complemento espacial del análisis — el 
+modelo CAR de Andrés — que identifica patrones de clustering 
+geográfico entre alcaldías contiguas.
+
+Es importante señalar que todos los intervalos de credibilidad 
+al 95% cruzan el cero. Los efectos deben interpretarse como 
+tendencias en los datos más que como diferencias estadísticamente 
+conclusivas, lo cual es consistente con el tamaño de muestra 
+disponible por alcaldía.
+
+# 6. Modelo 4 — DLM: coeficientes dinámicos mes a mes
+**Modelo principal del proyecto.** Basado en el Ejercicio 10. Usa las **mismas variables** que el modelo espacial para que ambos modelos sean comparables, añadiendo `post_2018`
+como variable exclusivamente temporal y un offset de población.
+
+Los coeficientes βⱼₜ evolucionan cada mes:
+
+$$Y_t \sim \text{Poisson}(\mu_t)$$
+
+$$\log(\mu_t) = \beta_{0t} + \beta_{1t} \cdot \text{homicidios}_t + \beta_{2t} \cdot \text{robos}_t + \beta_{3t} \cdot \text{violencia}_t + \beta_{4t} \cdot \text{seguros}_t + \beta_{5t} \cdot \text{post2018}_t + \text{offset}_t$$
+
+$$\beta_{jt} = \beta_{j,t-1} + \omega_{jt}, \quad \omega_{jt} \sim N(0, W_j^{-1})$$
+
+
+```{r}
+# =================================================================== #
+# MODELO 4 - Coeficientes dinamicos
+# Pregunta: ¿cómo cambió el efecto de la violencia y las otras variables sobre
+#            las desapariciones en CDMX durante 2015-2024?
+
+# Usa la misma serie agregada que M1–M3 (variables ya estandarizadas en sección 1)
+n_dlm <- n
+t_dlm <- t
+```
+
+```{r}
+# --- Datos para JAGS ---
+data4 <- list("n"          = n,
+              "y"          = as.integer(agg$n_desapariciones),
+              "homicidios" = agg$homicidios_std,
+              "robos"      = agg$robos_std,
+              "violencia"  = agg$violencia_std,
+              "pct_seguros"= agg$pct_seguros_std,
+              "post2018"   = as.integer(agg$post_2018),
+              "offset"     = agg$offset)
+
+inits4 <- function() {
+  list(beta0  = rep(0, n_dlm),
+       beta1  = rep(0, n_dlm),
+       beta2  = rep(0, n_dlm),
+       beta3  = rep(0, n_dlm),
+       beta4  = rep(0, n_dlm),
+       beta5  = rep(0, n_dlm),
+       tau.w0 = 1, tau.w1 = 1,
+       tau.w2 = 1, tau.w3 = 1,
+       tau.w4 = 1, tau.w5 = 1,
+       yf     = rep(1, n_dlm))
+}
+
+pars4 <- c("beta0", "beta1", "beta2", "beta3", "beta4", "beta5",
+           "sig.w0", "sig.w1", "sig.w2", "sig.w3", "sig.w4", "sig.w5",
+           "mu", "yf")
+
+mod4.sim <- jags(data4, inits4, pars4,
+                 model.file = "../modelos/Mod4_Dinamico.txt",
+                 n.iter   = 100000,
+                 n.chains = 2,
+                 n.burnin = 10000,
+                 n.thin   = 20)
+```
+
+
+
+```{r}
+# =================================================================== #
+# DIAGNÓSTICOS MODELO 4
+# =================================================================== #
+
+out4.a   <- mod4.sim$BUGSoutput$sims.array
+out4     <- mod4.sim$BUGSoutput$sims.list
+out4.sum <- mod4.sim$BUGSoutput$summary
+
+# Traza del intercepto dinámico beta0[1]
+z1 <- out4.a[, 1, "beta0[1]"]
+z2 <- out4.a[, 2, "beta0[1]"]
+par(mfrow = c(3, 2))
+plot(z1, type = "l", col = "grey50",
+     main = "Mod4 DLM: traza beta0[1]")
+lines(z2, col = "firebrick2")
+y1 <- cumsum(z1) / (1:length(z1))
+y2 <- cumsum(z2) / (1:length(z2))
+plot(y1, type = "l", col = "grey50", ylim = range(y1, y2),
+     main = "Media acumulada beta0[1]")
+lines(y2, col = "firebrick2")
+hist(z1, freq = FALSE, col = "grey50",
+     main = "Histograma beta0[1] cadena 1")
+hist(z2, freq = FALSE, col = "firebrick2",
+     main = "Histograma beta0[1] cadena 2")
+acf(z1, main = "ACF cadena 1")
+acf(z2, main = "ACF cadena 2")
+```
+
+```{r}
+out4.dic <- mod4.sim$BUGSoutput$DIC
+print(c("DIC Mod4 =", out4.dic))
+```
+
+
+```{r}
+#predicciones 
+out4.yf <- out4.sum[grep("^yf", rownames(out4.sum)), ]
+y       <- agg$n_desapariciones
+ymin    <- min(y, out4.yf[, c(1, 3, 7)])
+ymax    <- max(y, out4.yf[, c(1, 3, 7)])
+par(mfrow = c(1, 1))
+plot(t_dlm, y, type = "l", col = "grey50",
+     ylim = c(ymin, ymax),
+     xlab = "Mes (índice)", ylab = "Desapariciones",
+     main = "Mod4 DLM: predicciones vs observado")
+lines(t_dlm, out4.yf[, 1], col = 2, lwd = 2)
+lines(t_dlm, out4.yf[, 3], col = 2, lty = 2)
+lines(t_dlm, out4.yf[, 7], col = 2, lty = 2)
+abline(v = which(agg$post_2018 == 1)[1],
+       col = "steelblue", lty = 3, lwd = 1.5)
+abline(v = which(agg$post_2024 == 1)[1],
+       col = "darkgreen", lty = 3, lwd = 1.5)
+legend("topright",
+       legend = c("Observado", "Media posterior", "IC 95%",
+                  "Cambio 2018", "Cambio 2024"),
+       col = c("grey50", 2, 2, "steelblue", "darkgreen"),
+       lty = c(1, 1, 2, 3, 3), bty = "n")
+```
+
+Interpretacion: Efectivamente aumentaron las desapariciones con el cambio de gobierno y el nuevo sistema de registro.
+
+Las predicciones del Modelo 4 Dinamico muestran un ajuste 
+satisfactorio a la serie observada, particularmente en el 
+período post-2018 donde la media posterior sigue de cerca 
+los valores observados y la serie real permanece dentro del 
+intervalo de credibilidad al 95%. 
+
+La gráfica revela un cambio estructural marcado alrededor 
+del mes 40 (diciembre 2018), con un incremento súbito en 
+las desapariciones registradas. Sin embargo, este salto 
+debe interpretarse con cautela: la creación del Registro 
+Nacional de Personas Desaparecidas y No Localizadas (RNPDNO) 
+en 2017–2018 mejoró significativamente la sistematización 
+del registro de casos, por lo que parte del incremento 
+observado puede atribuirse a mayor cobertura institucional 
+más que a un aumento real en las desapariciones.
+
+En el período previo al mes 40 (2015–2018) el modelo 
+subestima ligeramente los valores observados, lo cual es 
+consistente con la hipótesis de subregistro en ese período. 
+Esta limitación de los datos fuente es inherente al análisis 
+y no invalida las conclusiones del modelo para el período 
+con datos (2018–2024).
+
+***nota
+Sí hubo un cambio en el patrón de desapariciones asociado al cambio de sexenio, pero no es posible distinguir si fue causado por el cambio de gobierno o por la mejora en el sistema de registro.
+
+
+
+## Efecto dinámico de homicidios — β₁ₜ
+```{r}
+# Gráfica principal — evolución del efecto de homicidios
+# Análoga a out.beta[seq(1,312,by=3),1] del Ej. 10 del Prof.
+out4.beta1 <- out4.sum[grep("^beta1", rownames(out4.sum)), ]
+ymin <- min(out4.beta1[, c(1, 3, 7)])
+ymax <- max(out4.beta1[, c(1, 3, 7)])
+par(mfrow = c(1, 1))
+plot(t_dlm, out4.beta1[, 1],
+     type = "l", lwd = 2, col = "steelblue",
+     ylim = c(ymin, ymax),
+     xlab = "Mes (índice)",
+     ylab = expression(beta[1][t]),
+     main = "Efecto dinámico de homicidios sobre desapariciones (CDMX)")
+lines(t_dlm, out4.beta1[, 3], lty = 2, col = "steelblue")
+lines(t_dlm, out4.beta1[, 7], lty = 2, col = "steelblue")
+abline(h = 0, col = "grey70", lty = 3)
+abline(v = which(agg$post_2018 == 1)[1],
+       col = "firebrick2", lty = 3, lwd = 1.5)
+abline(v = which(agg$post_2024 == 1)[1],
+       col = "darkgreen", lty = 3, lwd = 1.5)
+legend("topright",
+       legend = c("Media posterior", "IC 95%",
+                  "Cambio 2018", "Cambio 2024"),
+       col = c("steelblue", "steelblue", "firebrick2", "darkgreen"),
+       lty = c(1, 2, 3, 3), bty = "n")
+```
+
+```{r}
+# Los 6 betas juntos — análogo a los plots del Ej. 10 del Prof.
+beta_names <- c("beta0", "beta1", "beta2",
+                "beta3", "beta4", "beta5")
+titulos    <- c("β₀t — Intercepto",
+                "β₁t — Homicidios",
+                "β₂t — Robos",
+                "β₃t — Violencia familiar",
+                "β₄t — Pct seguros",
+                "β₅t — Post-2018")
+colores    <- c("grey40", "steelblue", "firebrick2",
+                "darkgreen", "darkorange", "purple")
+
+par(mfrow = c(2, 3))
+for (j in seq_along(beta_names)) {
+  out.bj <- out4.sum[grep(paste0("^", beta_names[j]),
+                          rownames(out4.sum)), ]
+  ymin <- min(out.bj[, c(1, 3, 7)])
+  ymax <- max(out.bj[, c(1, 3, 7)])
+  plot(t_dlm, out.bj[, 1],
+       type = "l", lwd = 2, col = colores[j],
+       ylim = c(ymin, ymax),
+       xlab = "Mes (índice)", ylab = titulos[j],
+       main = titulos[j])
+  lines(t_dlm, out.bj[, 3], lty = 2, col = colores[j])
+  lines(t_dlm, out.bj[, 7], lty = 2, col = colores[j])
+  abline(h = 0, col = "grey70", lty = 3)
+  abline(v = which(agg$post_2018 == 1)[1],
+         col = "firebrick2", lty = 3)
+  abline(v = which(agg$post_2024 == 1)[1],
+         col = "darkgreen", lty = 3)
+}
+par(mfrow = c(1, 1))
+```
+
+β₀t — Intercepto
+Tendencia descendente clara de ~-1 a ~-5. El nivel base de desapariciones disminuye a lo largo del período. Interesante.
+
+β₁t — Homicidios
+Oscila alrededor de 0, IC cruza cero constantemente. Sin efecto claro — confirma lo que vimos en M1 y M2.
+
+β₂t — Robos
+Negativo y relativamente estable alrededor de -1. IC amplio que cruza cero. Contradice el signo positivo de M1/M2 — probablemente por multicolinealidad con violencia familiar.
+
+β₃t — Violencia familiar
+Positivo y estable alrededor de +1. Es el coeficiente más robusto del DLM — se mantiene alejado de cero durante casi todo el período.
+
+β₄t — Pct seguros
+Positivo al inicio, decrece hacia cero. IC muy amplio. Poca señal.
+
+β₅t — Post-2018
+Oscila alrededor de 1, IC muy amplio que cruza cero. No hay salto claro en la línea roja.
+
+```{r}
+# Modelo 4 — resumen de las sigmas (varianza del sistema)
+# que indican cuánto evolucionó cada coeficiente
+print("=== MODELO 4 — varianza del sistema ===")
+print(out4.sum[grep("^sig", rownames(out4.sum)), c(1, 3, 7)])
+```
+
+Esto significa que todos los coeficientes evolucionan con la misma intensidad — ninguno es particularmente más dinámico que otro. El IC de los betas al inicio y al final es enormemente amplio, confirmando lo que vimos en la gráfica: el modelo dinamico tiene mucha incertidumbre mes a mes.
+
+
+```{r}
+# =================================================================== #
+# COMPARACIÓN DIC — todos los modelos
+# =================================================================== #
+print("=== COMPARACIÓN DIC — TODOS LOS MODELOS ===")
+print(data.frame(
+  Modelo = c("Mod1 — Poisson Breakpoint (baseline)",
+             "Mod2 — Binomial Negativa + Covariables",
+             "Mod3 — Poisson Efectos Aleatorios",
+             "Mod4 — DLM Coeficientes Dinámicos"),
+  DIC    = c(round(out1.dic, 2),
+             round(out2.dic, 2),
+             round(out3.dic, 2),
+             round(out4.dic, 2))
+))
+```
+
+
+```{r}
+# ==================================
+# PREGUNTAS
+# ==================================
+```
+
+## Preguntas
+# ¿Hubo cambio en 2018?
+ 
+Los modelos estáticos M1 y M3 detectan un coeficiente 
+post_2018 positivo y significativo (exp(0.287)≈1.33 en M1, 
+exp(0.906)≈2.47 en M3), lo que sugiere un incremento en 
+desapariciones registradas después de diciembre de 2018. 
+Sin embargo, el Modelo 2 — que controla sobredispersión — 
+no detecta este efecto como significativo. Adicionalmente, 
+el modelo dinámico M4 no muestra un cambio abrupto en los 
+coeficientes alrededor del mes 40, lo que sugiere que el 
+incremento observado puede estar parcialmente explicado 
+por la mejora en el sistema de registro del RNPDNO más 
+que por un cambio estructural en la dinámica real de 
+desapariciones.
+
+# ¿Qué variable importa más?
+```{r}
+# Tabla completa Modelo 1
+print("=== MODELO 1 ===")
+print(out1.sum.t)
+
+# Tabla completa Modelo 2
+print("=== MODELO 2 ===")
+print(out2.sum.t)
+
+# Tabla completa Modelo 3
+print("=== MODELO 3 ===")
+print(out3.sum.t)
+
+# Modelo 4 — resumen de las sigmas (varianza del sistema)
+# que indican cuánto evolucionó cada coeficiente
+print("=== MODELO 4 — varianza del sistema ===")
+print(out4.sum[grep("^sig", rownames(out4.sum)), c(1, 3, 7)])
+
+# Y los valores medios de cada beta al inicio y al final
+print("=== MODELO 4 — beta al inicio (t=1) ===")
+print(out4.sum[c("beta0[1]", "beta1[1]", "beta2[1]",
+                  "beta3[1]", "beta4[1]", "beta5[1]"), c(1, 3, 7)])
+
+print("=== MODELO 4 — beta al final (t=n) ===")
+n_str <- as.character(n_dlm)
+print(out4.sum[c(paste0("beta0[", n_str, "]"),
+                  paste0("beta1[", n_str, "]"),
+                  paste0("beta2[", n_str, "]"),
+                  paste0("beta3[", n_str, "]"),
+                  paste0("beta4[", n_str, "]"),
+                  paste0("beta5[", n_str, "]")), c(1, 3, 7)])
+```
+
+
+**Referencia de coeficientes (M1–M3):** `beta[1]` Intercepto · `beta[2]` Homicidios · `beta[3]` Robos · `beta[4]` Violencia familiar · `beta[5]` Pct seguros · `beta[6]` Post-2018
+
+
+Pct seguros — la más significativa en M1 y M2
+Positivo y muy significativo (prob=0.000) en M1 y M2. IC 95% no incluye cero. Esto parece contraintuitivo — mayor percepción de seguridad asociada a más desapariciones. La explicación más probable es que alcaldías con mayor percepción de seguridad tienen mejor reporte y registro de casos, no necesariamente más desapariciones reales.
+
+Robos — significativo en M1 y M2
+Positivo y consistente. A mayor incidencia de robos, más desapariciones registradas. Tiene sentido — ambos reflejan el nivel general de delincuencia en la alcaldía y el período.
+
+Violencia familiar — significativo en M1 y M3
+Negativo — a mayor violencia familiar registrada, menos desapariciones. Puede indicar que alcaldías con mayor reporte de violencia intrafamiliar tienen mejor infraestructura institucional que también previene desapariciones, o que hay sustitución en el tipo de delito reportado.
+
+Homicidios — borderline
+Positivo pero IC cruza cero en M2. No es la variable que mejor predice desapariciones una vez que controlas por robos y violencia familiar — hay multicolinealidad entre estas tres variables.
+
+Post-2018 — significativo en M1 y M3, no en M2
+El resultado más importante para su pregunta de investigación. Cuando se controla la sobredispersión (M2), el efecto desaparece. Esto sugiere que el incremento post-2018 está más relacionado con mayor variabilidad en el registro que con un cambio estructural real.
+
+# ¿cual es la variable mas importante?
+Entre las covariables incluidas, la percepción de seguridad 
+ciudadana (pct_seguros) resultó la variable más consistentemente 
+significativa en los modelos estáticos M1 y M2 (β≈0.27, 
+prob=0.000), con un efecto positivo que puede reflejar mejor 
+cobertura institucional del registro en alcaldías con mayor 
+percepción de seguridad, más que una relación causal directa.
+
+Los robos mostraron efecto positivo significativo en M1 y M2 
+(β≈0.16), sugiriendo que la incidencia delictiva general 
+predice mejor las desapariciones que la violencia extrema. 
+La violencia familiar mostró efecto negativo significativo 
+en M1 y M3 (β≈-0.14), resultado que requiere interpretación 
+cuidadosa dado que puede reflejar sustitución en el tipo de 
+delito reportado por alcaldía.
+
+Los homicidios, pese a ser la variable de violencia más 
+visible mediáticamente, resultaron borderline en M1 y no 
+significativos en M2, sugiriendo que una vez controladas 
+otras formas de delincuencia, los homicidios no predicen 
+independientemente las desapariciones en CDMX.
+
+En el modelo dinámico M4, los coeficientes de evolución 
+(sig.w ≈ 0.36 para todas las variables) indican que ninguna 
+variable mostró una dinámica temporal particularmente 
+destacada respecto a las demás, con intervalos de credibilidad 
+amplios que reflejan la incertidumbre inherente a estimar 
+coeficientes que evolucionan mes a mes con n=125 observaciones.
+
+
