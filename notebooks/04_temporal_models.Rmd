@@ -46,13 +46,19 @@ names(panel)
 # --------------------------------------------------------------
 # Serie agregada CDMX mensual (Modelos 1,2 y 3)
 # --------------------------------------------------------------
-# FUN = sum para conteos, first() para indicadores binarios
-agg <- aggregate(
-  cbind(n_desapariciones, post_2018, post_2024,
-        pct_seguros_cdmx, n_delitos_libertad) ~ anio + mes,
+# Conteos: suma entre alcaldías
+agg_counts <- aggregate(
+  cbind(n_desapariciones, pct_seguros_cdmx, n_delitos_libertad) ~ anio + mes,
   data = panel,
-  FUN  = function(x) if (is.numeric(x)) sum(x) else x[1]
+  FUN  = sum
 )
+# Indicadores binarios: mismo valor para todas las alcaldías en el mismo mes
+agg_flags <- aggregate(
+  cbind(post_2018, post_2024) ~ anio + mes,
+  data = panel,
+  FUN  = function(x) x[1]
+)
+agg <- merge(agg_counts, agg_flags, by = c("anio", "mes"))
 agg <- agg[order(agg$anio, agg$mes), ]
 agg
 
@@ -113,7 +119,10 @@ legend("topright",
 
 ```{r fig.width=10, fig.height=8}
 # Serie por alcaldía — facetas para ver cada una claramente
-ggplot(panel_clean,
+panel_plot <- panel[!is.na(panel$pct_seguros_cdmx) &
+                    !is.na(panel$pob_total), ]
+panel_plot$fecha <- as.Date(panel_plot$fecha)
+ggplot(panel_plot,
        aes(x = fecha, y = n_desapariciones)) +
   geom_line(color = "steelblue", linewidth = 0.6) +
   facet_wrap(~ nom_alcaldia, scales = "free_y", ncol = 4) +
@@ -455,7 +464,7 @@ plot(1:k, out3.theta[, 1],
      xlab = "Alcaldía (índice)", ylab = "",
      ylim = c(ymin, ymax),
      main = "Modelo 3: Efectos aleatorios por alcaldía")
-segments(1:k, out3.theta[, 3], 1:k, out3.theta[, 7])
+segments(1:k, out3.theta[, 2], 1:k, out3.theta[, 3])  # <- 2 y 3, no 3 y 7
 abline(h = 0, col = "grey70")
 ```
 
@@ -532,10 +541,10 @@ pars4 <- c("beta0", "beta1", "beta2", "beta3", "beta4", "beta5",
 
 mod4.sim <- jags(data4, inits4, pars4,
                  model.file = "../modelos/Mod4_Dinamico.txt",
-                 n.iter   = 20000,
+                 n.iter   = 100000,
                  n.chains = 2,
-                 n.burnin = 5000,
-                 n.thin   = 5)
+                 n.burnin = 10000,
+                 n.thin   = 20)
 ```
 
 
