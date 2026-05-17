@@ -17,6 +17,7 @@ library(sf)
 library(tmap)
 library(spdep)
 library(janitor)
+library(lubridate)
 ```
 
 # Carga de datos
@@ -103,6 +104,159 @@ ggplot(spatial_data,
               se = FALSE) +
   theme_minimal()
 ```
+```{r}
+# Mapa coroplético de desapariciones observadas
+
+library(sf)
+library(tmap)
+library(dplyr)
+
+# Cargar mapa de alcaldías
+cdmx_map <- st_read(
+  "../data/raw/cdmx_alcaldias.json",
+  quiet = TRUE
+)
+
+# Corregir encoding
+cdmx_map$NOMGEO <- iconv(
+  cdmx_map$NOMGEO,
+  from = "latin1",
+  to = "UTF-8"
+)
+
+# Construir base agregada por alcaldía
+map_data <- data %>%
+  mutate(
+    nom_alcaldia = case_when(
+      str_detect(nom_alcaldia, "Benito") ~ "Benito Juárez",
+      str_detect(nom_alcaldia, "Coyoac") ~ "Coyoacán",
+      str_detect(nom_alcaldia, "Cuauht") ~ "Cuauhtémoc",
+      str_detect(nom_alcaldia, "Obreg") ~ "Álvaro Obregón",
+      str_detect(nom_alcaldia, "Tlalpan") ~ "Tlalpan",
+      str_detect(nom_alcaldia, "huac") ~ "Tláhuac",
+      TRUE ~ nom_alcaldia
+    )
+  ) %>%
+  group_by(nom_alcaldia) %>%
+  summarise(
+    n_desapariciones = sum(n_desapariciones),
+    .groups = "drop"
+  )
+
+# Unir datos al mapa
+map_data <- cdmx_map %>%
+  left_join(
+    map_data,
+    by = c("NOMGEO" = "nom_alcaldia")
+  )
+
+# Graficar mapa
+tm_shape(map_data) +
+  tm_polygons(
+    "n_desapariciones",
+    palette = "Reds",
+    title = "Desapariciones"
+  ) +
+  tm_layout(
+    main.title = "Distribución espacial de desapariciones",
+    legend.outside = TRUE
+  )
+```
+
+```{r}
+# Distribución del número mensual de desapariciones
+
+ggplot(data, aes(x = n_desapariciones)) +
+  geom_histogram(bins = 15, fill = "gray70", color = "white") +
+  theme_minimal() +
+  labs(
+    title = "Distribución mensual de desapariciones",
+    x = "Número de desapariciones",
+    y = "Frecuencia"
+  )
+```
+```{r}
+# Distribución de la tasa de desapariciones por 100 mil habitantes
+
+ggplot(data, aes(x = tasa_desap_100k)) +
+  geom_histogram(bins = 20, fill = "gray70", color = "white") +
+  theme_minimal() +
+  labs(
+    title = "Distribución de la tasa de desapariciones por 100 mil habitantes",
+    x = "Tasa por 100 mil habitantes",
+    y = "Frecuencia"
+  )
+```
+
+```{r}
+# Boxplot de desapariciones por alcaldía
+
+ggplot(data, aes(
+  x = reorder(nom_alcaldia, n_desapariciones, median),
+  y = n_desapariciones
+)) +
+  geom_boxplot(fill = "gray80") +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Distribución de desapariciones por alcaldía",
+    x = "Alcaldía",
+    y = "Número de desapariciones"
+  )
+```
+
+```{r}
+# Distribución de desapariciones por alcaldía
+
+ggplot(data, aes(
+  x = reorder(nom_alcaldia, n_desapariciones, median),
+  y = n_desapariciones
+)) +
+  geom_boxplot(
+    fill = "gray80",
+    color = "gray30"
+  ) +
+  coord_flip() +
+  theme_minimal() +
+  labs(
+    title = "Distribución de desapariciones por alcaldía",
+    x = "Alcaldía",
+    y = "Número de desapariciones"
+  )
+```
+```{r}
+data_long <- data %>%
+  mutate(fecha = as.Date(fecha)) %>%
+  group_by(fecha) %>%
+  summarise(
+    desapariciones = sum(n_desapariciones, na.rm = TRUE),
+    delitos_libertad = sum(n_delitos_libertad, na.rm = TRUE),
+    extorsion = sum(n_extorsion, na.rm = TRUE),
+    feminicidios = sum(n_feminicidios, na.rm = TRUE),
+    homicidios = sum(n_homicidios, na.rm = TRUE),
+    robos = sum(n_robos, na.rm = TRUE),
+    violencia_familiar = sum(n_violencia_familiar, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = -fecha,
+    names_to = "variable",
+    values_to = "conteo"
+  )
+
+ggplot(data_long, aes(x = fecha, y = conteo)) +
+  geom_line(color = "steelblue", linewidth = 0.8) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 3) +
+  theme_minimal() +
+  labs(
+    title = "Evolución mensual de desapariciones y variables de violencia",
+    x = "Fecha",
+    y = "Conteo mensual"
+  )
+```
+
+
+
 # Heatmap de correlaciones
 
 ```{r}
