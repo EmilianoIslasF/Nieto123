@@ -3,15 +3,17 @@ model {
     # Verosimilitud: conteo de desapariciones ~ Poisson
     y[t] ~ dpois(mu[t])
 
-    # Media: log-link con tendencia lineal + dummies de cambio de gobierno
-    log(mu[t]) <- beta[1] + beta[2]*t + beta[3]*post2018[t] + beta[4]*post2024[t]
+    # Media: log-link con covariables base + offset de población
+    log(mu[t]) <- beta[1] + beta[2]*homicidios[t] + beta[3]*robos[t]
+                  + beta[4]*violencia[t] + beta[5]*pct_seguros[t]
+                  + beta[6]*post2018[t] + offset[t]
 
     # Predictiva
     yf[t] ~ dpois(mu[t])
   }
 
   # Iniciales
-  for (j in 1:4) {
+  for (j in 1:6) {
     beta[j] ~ dnorm(0, 0.001)
   }
 }

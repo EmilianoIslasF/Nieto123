@@ -3,10 +3,10 @@ model {
     # Verosimilitud: conteo de desapariciones por alcaldia x mes
     y[i] ~ dpois(mu[i])
 
-    # Media: log-link con efecto fijo de gobierno + efecto aleatorio por alcaldia
-    log(mu[i]) <- beta[1] + beta[2]*post2018[i] + beta[3]*post2024[i]
-                  + beta[4]*pct_seguros[i] + beta[5]*n_delitos_lib[i]
-                  + theta[alcaldia[i]] + log(offset[i])
+    # Media: log-link con covariables base + efecto aleatorio por alcaldia + offset
+    log(mu[i]) <- beta[1] + beta[2]*homicidios[i] + beta[3]*robos[i]
+                  + beta[4]*violencia[i] + beta[5]*pct_seguros[i]
+                  + beta[6]*post2018[i] + theta[alcaldia[i]] + log(offset[i])
 
     # Predictiva
     yf[i] ~ dpois(mu[i])
@@ -18,7 +18,7 @@ model {
   }
 
   # Iniciales para betas (efectos fijos)
-  for (j in 1:5) {
+  for (j in 1:6) {
     beta[j] ~ dnorm(0, 0.001)
   }
 
