@@ -1,0 +1,40 @@
+model {
+  # === ECUACIÓN DE OBSERVACIÓN ===
+  for (t in 1:n) {
+    y[t]  ~ dpois(mu[t])
+    log(mu[t]) <- beta0[t] 
+                  + beta1[t] * homicidios[t]
+                  + beta2[t] * post2018[t]
+                  + beta3[t] * pct_seguros[t]
+    
+    # Predictiva a un paso
+    yf[t] ~ dpois(mu[t])
+  }
+
+  # === ECUACIÓN DE EVOLUCIÓN ===
+  # Los coeficientes cambian cada mes
+  for (t in 2:n) {
+    beta0[t] ~ dnorm(beta0[t-1], tau.w0)
+    beta1[t] ~ dnorm(beta1[t-1], tau.w1)
+    beta2[t] ~ dnorm(beta2[t-1], tau.w2)
+    beta3[t] ~ dnorm(beta3[t-1], tau.w3)
+  }
+
+  # === PRIORS INICIALES (t=1) ===
+  beta0[1] ~ dnorm(0, 0.001)
+  beta1[1] ~ dnorm(0, 0.001)
+  beta2[1] ~ dnorm(0, 0.001)
+  beta3[1] ~ dnorm(0, 0.001)
+
+  # === PRIORS DE PRECISIONES (varianza del sistema W) ===
+  tau.w0 ~ dgamma(1, 1)
+  tau.w1 ~ dgamma(1, 1)
+  tau.w2 ~ dgamma(1, 1)
+  tau.w3 ~ dgamma(1, 1)
+
+  # Desviaciones estándar para reporte
+  sig.w0 <- 1 / sqrt(tau.w0)
+  sig.w1 <- 1 / sqrt(tau.w1)
+  sig.w2 <- 1 / sqrt(tau.w2)
+  sig.w3 <- 1 / sqrt(tau.w3)
+}
