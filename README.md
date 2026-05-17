@@ -32,7 +32,7 @@ El análisis se centra principalmente en las 16 alcaldías de la Ciudad de Méxi
 
 ### Objetivo general
 
-Analizar el comportamiento espacial y temporal de las desapariciones registradas en la Ciudad de México mediante modelos estadísticos espaciales y dinámicos, incorporando variables relacionadas con criminalidad, violencia y características demográficas. :contentReference[oaicite:2]{index=2}
+Analizar el comportamiento espacial y temporal de las desapariciones registradas en la Ciudad de México mediante modelos estadísticos espaciales y dinámicos, incorporando variables relacionadas con criminalidad, violencia y características demográficas.
 
 ### Objetivos específicos
 
