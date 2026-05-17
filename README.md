@@ -1,6 +1,6 @@
 # Modelos Espaciales y Dinámicos para el Análisis de Desapariciones en México
 
-Proyecto desarrollado para el curso de Métodos Lineales Generalizados (2026), enfocado en el análisis estadístico, espacial y temporal de desapariciones registradas en la Ciudad de México mediante modelos Poisson, modelos Bayesianos CAR y enfoques dinámicos. :contentReference[oaicite:0]{index=0}
+Proyecto desarrollado para el curso de Métodos Lineales Generalizados (2026), enfocado en el análisis estadístico, espacial y temporal de desapariciones registradas en la Ciudad de México mediante modelos Poisson, modelos Bayesianos CAR y enfoques dinámicos.
 
 ---
 # Autores
@@ -24,7 +24,7 @@ Este proyecto busca modelar la ocurrencia de desapariciones utilizando herramien
 - Heterogeneidad geográfica no observada.
 - Relación entre desapariciones y variables de criminalidad.
 
-El análisis se centra principalmente en las 16 alcaldías de la Ciudad de México durante el periodo 2015–2025. :contentReference[oaicite:1]{index=1}
+El análisis se centra principalmente en las 16 alcaldías de la Ciudad de México durante el periodo 2015–2025.
 
 ---
 
@@ -42,8 +42,7 @@ Analizar el comportamiento espacial y temporal de las desapariciones registradas
 - Implementar modelos espaciales Bayesianos tipo CAR.
 - Analizar residuos y efectos espaciales aleatorios.
 - Incorporar modelos dinámicos y de series de tiempo.
-- Comparar desempeño entre modelos espaciales y no espaciales. :contentReference[oaicite:3]{index=3}
-
+- Comparar desempeño entre modelos espaciales y no espaciales. 
 ---
 
 ## Fuente de datos
