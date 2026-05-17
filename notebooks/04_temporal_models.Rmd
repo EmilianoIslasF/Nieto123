@@ -466,20 +466,71 @@ out3.dic <- mod3.sim$BUGSoutput$DIC
 print(c("DIC Mod3 =", out3.dic))
 ```
 
-```{r}
-# Efectos aleatorios por alcaldia
+```{r fig.width=7, fig.height=6}
+# Efectos aleatorios por alcaldia — caterpillar plot horizontal
 out3.theta <- out3.sum[grep("^theta", rownames(out3.sum)), c(1, 3, 7)]
-k    <- K
-ymin <- min(out3.theta)
-ymax <- max(out3.theta)
-par(mfrow = c(1, 1))
-plot(1:k, out3.theta[, 1],
-     xlab = "Alcaldía (índice)", ylab = "",
-     ylim = c(ymin, ymax),
-     main = "Modelo 3: Efectos aleatorios por alcaldía")
-segments(1:k, out3.theta[, 2], 1:k, out3.theta[, 3])  # <- 2 y 3, no 3 y 7
-abline(h = 0, col = "grey70")
+
+# Mapeo índice → nombre de alcaldía
+mapeo   <- unique(panel_clean[, c("alcaldia_idx", "nom_alcaldia")])
+mapeo   <- mapeo[order(mapeo$alcaldia_idx), ]
+nombres <- mapeo$nom_alcaldia
+
+# Ordenar de menor a mayor efecto medio
+ord       <- order(out3.theta[, 1])
+theta_ord <- out3.theta[ord, ]
+nom_ord   <- nombres[ord]
+
+par(mfrow = c(1, 1), mar = c(4, 9, 3, 2))
+plot(theta_ord[, 1], 1:K,
+     xlim = range(theta_ord) * 1.05,
+     yaxt = "n",
+     xlab = expression(theta[k]),
+     ylab = "",
+     main = "Modelo 3: Efectos aleatorios por alcaldía (IC 95%)",
+     pch = 19, col = "steelblue", cex = 0.9)
+segments(theta_ord[, 2], 1:K, theta_ord[, 3], 1:K, col = "steelblue", lwd = 1.5)
+axis(2, at = 1:K, labels = nom_ord, las = 1, cex.axis = 0.8)
+abline(v = 0, col = "grey60", lty = 2)
+
 ```
+
+Interpretación
+
+El Modelo 3 incorpora efectos aleatorios θₖ por alcaldía para 
+capturar heterogeneidad espacial no explicada por las covariables. 
+Los efectos estimados muestran que, tras controlar por homicidios, 
+robos, violencia familiar y percepción de seguridad, la mayoría 
+de las 16 alcaldías presentan efectos cercanos a cero con 
+intervalos de credibilidad al 95% que incluyen el cero, lo que 
+sugiere que las covariables incluidas explican adecuadamente la 
+variación entre alcaldías.
+
+Sin embargo, dos alcaldías destacan con efectos residuales 
+positivos: Milpa Alta (θ₈ ≈ +0.5) y Miguel Hidalgo (θ₁₅ ≈ +0.5). 
+Ambas registran más desapariciones de las esperadas dado su perfil 
+de violencia. El caso de Milpa Alta es particularmente notable 
+pues es una de las alcaldías con menor densidad poblacional y 
+menores índices de violencia en CDMX, lo que hace que su efecto 
+residual positivo sugiera factores estructurales locales no 
+capturados por el modelo — posiblemente relacionados con 
+características geográficas que facilitan la ocultación de casos 
+o subregistro diferencial. Miguel Hidalgo, por su parte, concentra 
+zonas de alta actividad económica y nocturna que podrían explicar 
+el exceso de casos.
+
+Por el contrario, Coyoacán (θ₂ ≈ -0.3), La Magdalena Contreras 
+(θ₇ ≈ -0.4), Álvaro Obregón (θ₉ ≈ -0.2) y Tláhuac (θ₁₀ ≈ -0.2) 
+presentan efectos negativos, registrando menos desapariciones 
+de las predichas por sus indicadores de violencia. Estos resultados 
+son consistentes con el complemento espacial del análisis — el 
+modelo CAR de Andrés — que identifica patrones de clustering 
+geográfico entre alcaldías contiguas.
+
+Es importante señalar que todos los intervalos de credibilidad 
+al 95% cruzan el cero. Los efectos deben interpretarse como 
+tendencias en los datos más que como diferencias estadísticamente 
+conclusivas, lo cual es consistente con el tamaño de muestra 
+disponible por alcaldía.
 
 # 6. Modelo 4 — DLM: coeficientes dinámicos mes a mes
 **Modelo principal del proyecto.** Basado en el Ejercicio 10. Usa las **mismas variables** que el modelo espacial para que ambos modelos sean comparables, añadiendo `post_2018`
@@ -603,6 +654,36 @@ legend("topright",
        lty = c(1, 1, 2, 3, 3), bty = "n")
 ```
 
+Interpretacion: Efectivamente aumentaron las desapariciones con el cambio de gobierno y el nuevo sistema de registro.
+
+Las predicciones del Modelo 4 Dinamico muestran un ajuste 
+satisfactorio a la serie observada, particularmente en el 
+período post-2018 donde la media posterior sigue de cerca 
+los valores observados y la serie real permanece dentro del 
+intervalo de credibilidad al 95%. 
+
+La gráfica revela un cambio estructural marcado alrededor 
+del mes 40 (diciembre 2018), con un incremento súbito en 
+las desapariciones registradas. Sin embargo, este salto 
+debe interpretarse con cautela: la creación del Registro 
+Nacional de Personas Desaparecidas y No Localizadas (RNPDNO) 
+en 2017–2018 mejoró significativamente la sistematización 
+del registro de casos, por lo que parte del incremento 
+observado puede atribuirse a mayor cobertura institucional 
+más que a un aumento real en las desapariciones.
+
+En el período previo al mes 40 (2015–2018) el modelo 
+subestima ligeramente los valores observados, lo cual es 
+consistente con la hipótesis de subregistro en ese período. 
+Esta limitación de los datos fuente es inherente al análisis 
+y no invalida las conclusiones del modelo para el período 
+con datos (2018–2024).
+
+***nota
+Sí hubo un cambio en el patrón de desapariciones asociado al cambio de sexenio, pero no es posible distinguir si fue causado por el cambio de gobierno o por la mejora en el sistema de registro.
+
+
+
 ## Efecto dinámico de homicidios — β₁ₜ
 ```{r}
 # Gráfica principal — evolución del efecto de homicidios
@@ -666,6 +747,33 @@ for (j in seq_along(beta_names)) {
 par(mfrow = c(1, 1))
 ```
 
+β₀t — Intercepto
+Tendencia descendente clara de ~-1 a ~-5. El nivel base de desapariciones disminuye a lo largo del período. Interesante.
+
+β₁t — Homicidios
+Oscila alrededor de 0, IC cruza cero constantemente. Sin efecto claro — confirma lo que vimos en M1 y M2.
+
+β₂t — Robos
+Negativo y relativamente estable alrededor de -1. IC amplio que cruza cero. Contradice el signo positivo de M1/M2 — probablemente por multicolinealidad con violencia familiar.
+
+β₃t — Violencia familiar
+Positivo y estable alrededor de +1. Es el coeficiente más robusto del DLM — se mantiene alejado de cero durante casi todo el período.
+
+β₄t — Pct seguros
+Positivo al inicio, decrece hacia cero. IC muy amplio. Poca señal.
+
+β₅t — Post-2018
+Oscila alrededor de 1, IC muy amplio que cruza cero. No hay salto claro en la línea roja.
+
+```{r}
+# Modelo 4 — resumen de las sigmas (varianza del sistema)
+# que indican cuánto evolucionó cada coeficiente
+print("=== MODELO 4 — varianza del sistema ===")
+print(out4.sum[grep("^sig", rownames(out4.sum)), c(1, 3, 7)])
+```
+
+Esto significa que todos los coeficientes evolucionan con la misma intensidad — ninguno es particularmente más dinámico que otro. El IC de los betas al inicio y al final es enormemente amplio, confirmando lo que vimos en la gráfica: el modelo dinamico tiene mucha incertidumbre mes a mes.
+
 
 ```{r}
 # =================================================================== #
@@ -685,5 +793,117 @@ print(data.frame(
 ```
 
 
+```{r}
+# ==================================
+# PREGUNTAS
+# ==================================
+```
+
+## Preguntas
+# ¿Hubo cambio en 2018?
+ 
+Los modelos estáticos M1 y M3 detectan un coeficiente 
+post_2018 positivo y significativo (exp(0.287)≈1.33 en M1, 
+exp(0.906)≈2.47 en M3), lo que sugiere un incremento en 
+desapariciones registradas después de diciembre de 2018. 
+Sin embargo, el Modelo 2 — que controla sobredispersión — 
+no detecta este efecto como significativo. Adicionalmente, 
+el modelo dinámico M4 no muestra un cambio abrupto en los 
+coeficientes alrededor del mes 40, lo que sugiere que el 
+incremento observado puede estar parcialmente explicado 
+por la mejora en el sistema de registro del RNPDNO más 
+que por un cambio estructural en la dinámica real de 
+desapariciones.
+
+# ¿Qué variable importa más?
+```{r}
+# Tabla completa Modelo 1
+print("=== MODELO 1 ===")
+print(out1.sum.t)
+
+# Tabla completa Modelo 2
+print("=== MODELO 2 ===")
+print(out2.sum.t)
+
+# Tabla completa Modelo 3
+print("=== MODELO 3 ===")
+print(out3.sum.t)
+
+# Modelo 4 — resumen de las sigmas (varianza del sistema)
+# que indican cuánto evolucionó cada coeficiente
+print("=== MODELO 4 — varianza del sistema ===")
+print(out4.sum[grep("^sig", rownames(out4.sum)), c(1, 3, 7)])
+
+# Y los valores medios de cada beta al inicio y al final
+print("=== MODELO 4 — beta al inicio (t=1) ===")
+print(out4.sum[c("beta0[1]", "beta1[1]", "beta2[1]",
+                  "beta3[1]", "beta4[1]", "beta5[1]"), c(1, 3, 7)])
+
+print("=== MODELO 4 — beta al final (t=n) ===")
+n_str <- as.character(n_dlm)
+print(out4.sum[c(paste0("beta0[", n_str, "]"),
+                  paste0("beta1[", n_str, "]"),
+                  paste0("beta2[", n_str, "]"),
+                  paste0("beta3[", n_str, "]"),
+                  paste0("beta4[", n_str, "]"),
+                  paste0("beta5[", n_str, "]")), c(1, 3, 7)])
+```
+
+
+```{r}
+"""
+beta[1] Intercepto
+beta[2]Homicidios
+beta[3]Robos
+beta[4]Violencia familiar
+beta[5]Pct seguros
+beta[6]Post-2018
+"""
+```
+
+
+Pct seguros — la más significativa en M1 y M2
+Positivo y muy significativo (prob=0.000) en M1 y M2. IC 95% no incluye cero. Esto parece contraintuitivo — mayor percepción de seguridad asociada a más desapariciones. La explicación más probable es que alcaldías con mayor percepción de seguridad tienen mejor reporte y registro de casos, no necesariamente más desapariciones reales.
+
+Robos — significativo en M1 y M2
+Positivo y consistente. A mayor incidencia de robos, más desapariciones registradas. Tiene sentido — ambos reflejan el nivel general de delincuencia en la alcaldía y el período.
+
+Violencia familiar — significativo en M1 y M3
+Negativo — a mayor violencia familiar registrada, menos desapariciones. Puede indicar que alcaldías con mayor reporte de violencia intrafamiliar tienen mejor infraestructura institucional que también previene desapariciones, o que hay sustitución en el tipo de delito reportado.
+
+Homicidios — borderline
+Positivo pero IC cruza cero en M2. No es la variable que mejor predice desapariciones una vez que controlas por robos y violencia familiar — hay multicolinealidad entre estas tres variables.
+
+Post-2018 — significativo en M1 y M3, no en M2
+El resultado más importante para su pregunta de investigación. Cuando se controla la sobredispersión (M2), el efecto desaparece. Esto sugiere que el incremento post-2018 está más relacionado con mayor variabilidad en el registro que con un cambio estructural real.
+
+# ¿cual es la variable mas importante?
+Entre las covariables incluidas, la percepción de seguridad 
+ciudadana (pct_seguros) resultó la variable más consistentemente 
+significativa en los modelos estáticos M1 y M2 (β≈0.27, 
+prob=0.000), con un efecto positivo que puede reflejar mejor 
+cobertura institucional del registro en alcaldías con mayor 
+percepción de seguridad, más que una relación causal directa.
+
+Los robos mostraron efecto positivo significativo en M1 y M2 
+(β≈0.16), sugiriendo que la incidencia delictiva general 
+predice mejor las desapariciones que la violencia extrema. 
+La violencia familiar mostró efecto negativo significativo 
+en M1 y M3 (β≈-0.14), resultado que requiere interpretación 
+cuidadosa dado que puede reflejar sustitución en el tipo de 
+delito reportado por alcaldía.
+
+Los homicidios, pese a ser la variable de violencia más 
+visible mediáticamente, resultaron borderline en M1 y no 
+significativos en M2, sugiriendo que una vez controladas 
+otras formas de delincuencia, los homicidios no predicen 
+independientemente las desapariciones en CDMX.
+
+En el modelo dinámico M4, los coeficientes de evolución 
+(sig.w ≈ 0.36 para todas las variables) indican que ninguna 
+variable mostró una dinámica temporal particularmente 
+destacada respecto a las demás, con intervalos de credibilidad 
+amplios que reflejan la incertidumbre inherente a estimar 
+coeficientes que evolucionan mes a mes con n=125 observaciones.
 
 
