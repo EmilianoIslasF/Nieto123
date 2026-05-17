@@ -850,16 +850,7 @@ print(out4.sum[c(paste0("beta0[", n_str, "]"),
 ```
 
 
-```{r}
-"""
-beta[1] Intercepto
-beta[2]Homicidios
-beta[3]Robos
-beta[4]Violencia familiar
-beta[5]Pct seguros
-beta[6]Post-2018
-"""
-```
+**Referencia de coeficientes (M1–M3):** `beta[1]` Intercepto · `beta[2]` Homicidios · `beta[3]` Robos · `beta[4]` Violencia familiar · `beta[5]` Pct seguros · `beta[6]` Post-2018
 
 
 Pct seguros — la más significativa en M1 y M2
