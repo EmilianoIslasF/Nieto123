@@ -1,40 +1,59 @@
 model {
-  # === ECUACIÓN DE OBSERVACIÓN ===
+
   for (t in 1:n) {
     y[t]  ~ dpois(mu[t])
-    log(mu[t]) <- beta0[t] 
+
+    log(mu[t]) <- beta0[t]
                   + beta1[t] * homicidios[t]
-                  + beta2[t] * post2018[t]
-                  + beta3[t] * pct_seguros[t]
-    
+                  + beta2[t] * robos[t]
+                  + beta3[t] * violencia[t]
+                  + beta4[t] * pct_seguros[t]
+                  + beta5[t] * post2018[t]
+                  + offset[t]
+
     # Predictiva a un paso
     yf[t] ~ dpois(mu[t])
   }
 
-  # === ECUACIÓN DE EVOLUCIÓN ===
-  # Los coeficientes cambian cada mes
+  # ECUACIÓN DE EVOLUCIÓN
+  # Cada coeficiente sigue un paseo aleatorio: beta_jt ~ N(beta_j,t-1, W_j)
+  # Basado en Ejercicio 10 
+
   for (t in 2:n) {
     beta0[t] ~ dnorm(beta0[t-1], tau.w0)
     beta1[t] ~ dnorm(beta1[t-1], tau.w1)
     beta2[t] ~ dnorm(beta2[t-1], tau.w2)
     beta3[t] ~ dnorm(beta3[t-1], tau.w3)
+    beta4[t] ~ dnorm(beta4[t-1], tau.w4)
+    beta5[t] ~ dnorm(beta5[t-1], tau.w5)
   }
 
-  # === PRIORS INICIALES (t=1) ===
+  # DISTRIBUCIONES INICIALES — t = 1
+  # Prior vaga (precision = 0.001 equivale a varianza = 1000)
+
   beta0[1] ~ dnorm(0, 0.001)
   beta1[1] ~ dnorm(0, 0.001)
   beta2[1] ~ dnorm(0, 0.001)
   beta3[1] ~ dnorm(0, 0.001)
+  beta4[1] ~ dnorm(0, 0.001)
+  beta5[1] ~ dnorm(0, 0.001)
 
-  # === PRIORS DE PRECISIONES (varianza del sistema W) ===
+  # PRIORS DE PRECISIONES DEL SISTEMA (W_j)
+  # Gamma(1,1) — prior vaga pero propia, evita problemas numéricos
+
   tau.w0 ~ dgamma(1, 1)
   tau.w1 ~ dgamma(1, 1)
   tau.w2 ~ dgamma(1, 1)
   tau.w3 ~ dgamma(1, 1)
+  tau.w4 ~ dgamma(1, 1)
+  tau.w5 ~ dgamma(1, 1)
 
-  # Desviaciones estándar para reporte
+  # Desviaciones estándar para reporte e interpretación
   sig.w0 <- 1 / sqrt(tau.w0)
   sig.w1 <- 1 / sqrt(tau.w1)
   sig.w2 <- 1 / sqrt(tau.w2)
   sig.w3 <- 1 / sqrt(tau.w3)
+  sig.w4 <- 1 / sqrt(tau.w4)
+  sig.w5 <- 1 / sqrt(tau.w5)
+
 }
