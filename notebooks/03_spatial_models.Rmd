@@ -445,3 +445,10 @@ En el mapa se observan alcaldías con efectos espaciales positivos (tonos rojos)
 Por otro lado, los efectos espaciales negativos (tonos azules) representan alcaldías con menor riesgo relativo al esperado por el modelo, indicando zonas donde la incidencia observada resulta relativamente baja una vez considerados los factores explicativos.
 
 Asimismo, se aprecia cierta agrupación geográfica de los efectos espaciales, lo cual evidencia la presencia de autocorrelación espacial entre alcaldías vecinas. Esto confirma la pertinencia de utilizar un modelo CAR en lugar de un modelo Poisson clásico independiente.
+
+## Coeficientes betas
+
+```{r}
+round(modelo_car_1$summary.results, 4)
+```
+
